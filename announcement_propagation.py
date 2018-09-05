@@ -1,7 +1,7 @@
 '''
 Created on Aug 23, 2018
 
-@author: Mike
+@author: Mike P
 
 May Require 'psycopg2'
 "pip3 install psycopg2"
@@ -319,7 +319,7 @@ def prop_anns_from_customers_to_peers_providers(ann_dict,as_graph,
     return
 
 def give_ann_to_as_path(as_path, prefix, hop, as_graph, 
-                        ases_with_customer_announcements):
+                        ases_with_anns_sent_to_peers_providers):
     """Record announcement to all ASes on as_path
     
     Args:
@@ -337,7 +337,7 @@ def give_ann_to_as_path(as_path, prefix, hop, as_graph,
         ases_with_customer_announcements(:obj:`list`, optional):
             a list of ASNs for ASes that have announcements from customers.
     """
-    
+ 
     print("\tPlacing Recorded Announcements...")
     #avoids error for anomaly announcement
     if(as_path is None):
@@ -358,33 +358,27 @@ def give_ann_to_as_path(as_path, prefix, hop, as_graph,
         #If not at the most recent AS (rightmost in rev_path), record the AS it is sent to next
         if(i<len(as_path)-1):
             #similar to rec_from() function, could get own function
-            #for each neighbor, if the ASN matches the next in rev_path, record it's relationship as sent_to
             found_sent_to = 0
-            for provider in as_graph.ases[asn].providers:
-                if(provider == rev_path[i+1]):
-                    sent_to = 0
+            asn_sent_to = rev_path[i+1]
+            if(asn_sent_to in as_graph.ases[asn].providers):
+                sent_to = 0
+                found_sent_to = 1
+            if(not found_sent_to):
+                if(asn_sent_to in as_graph.ases[asn].peers):
+                    sent_to = 1
                     found_sent_to = 1
-                    break
             if(found_sent_to == 0):
-                for peer in as_graph.ases[asn].peers:
-                    if(peer == rev_path[i+1]):
-                        sent_to = 1
-                        found_sent_to = 1
-                        break
-            if(found_sent_to == 0):
-                for customer in as_graph.ases[asn].customers:
-                    if(customer == rev_path[i+1]):
-                        sent_to = 2
-                        found_sent_to = 1
-                        break
+                if(asn_sent_to in as_graph.ases[asn].customers):
+                    sent_to = 2
+                    found_sent_to = 1
 
         #path for current AS removes "future" ASes
         this_path_len = i + 1
         #received_from (relationship to previous AS in as_path) retrieved from rec_from()
         received_from = rec_from(this_path,as_graph)
         #if received_from is customer (2) append this ASN to ases_with_customer_annnouncements
-        if(received_from == 2):
-            append_without_duplicates(ases_with_customer_announcements, asn)
+#        if(received_from == 2):
+ #           append_without_duplicates(ases_with_customer_announcements, asn)
         #create announcement named tuple using new path, sent_to, and received_from
         announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,this_path_len)
         #append new announcement to ann_dict
@@ -393,7 +387,7 @@ def give_ann_to_as_path(as_path, prefix, hop, as_graph,
        	i = i + 1
     return
 
-def prop_anns_sent_to_peers_providers(as_graph, ases_with_announcements, ases_with_customer_announcements):
+def prop_anns_sent_to_peers_providers(as_graph, ases_with_announcements):
     """Send announcements known to be sent to a peer or provider of each AS to
         the other peers and providers of each AS
         
