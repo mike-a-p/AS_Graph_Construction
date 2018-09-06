@@ -104,30 +104,6 @@ def create_relationship_graph(cursor, num_entries = None):
 
     neighbor_time = time.time()
     sys.stdout.write('\n')
-    cursor.close()
-    print("\tAssigning Ranks...")
-    graph.rank()
-    for rank in graph.ases_by_rank:
-        print("RANK: " + str(rank) + ": " + str(len(ases_by_rank[rank])) + " Entries.")
-    for rank in graph.ases_by_rank:
-       print("RANK " + str(rank) + ": " + str(ases_by_rank[rank]), file=open("output.txt","a"))
-    ranking_time = time.time()
+    #cursor.close()
 
-#    undefined = list()
- #   for asn in graph.ases:
-  #      if(graph.ases[asn].rank is None):
-   #         undefined.append(asn)
-    #print("UNDEFINED ASES: " + str(len(undefined)))
-#    print("STRONGLY CONNECTED COMPONENTS")
-    i = 0
-    print("Writing Components To File")
-    progress = progress_bar(len(graph.strongly_connected_components))
-    for component in graph.strongly_connected_components:
-        i = i + 1
-        print("COMPONENT " + str(i) + ": " + str(component), file=open("components_iter.txt","a"))
-        progress.update()
-
-    print("\nTime to construct relationship graph: " + str(neighbor_time - start_time) + "s") 
-    print("Time to assign ranks: " + str(ranking_time - neighbor_time) + "s")
-    print("Total time:  " + str(ranking_time - start_time) + "s")
     return graph

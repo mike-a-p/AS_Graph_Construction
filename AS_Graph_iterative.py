@@ -23,12 +23,13 @@ class AS_Graph:
         return
 
     def combine_components(self):
-    '''Takes the SCCs of this graph and exchanges them for "super nodes".
-        These super nodes have the providers, peers and customers than all
-        nodes in the SCC would have. These providers, peers, and customers
-         point to the new super node.
+        """Takes the SCCs of this graph and exchanges them for "super nodes".
+            These super nodes have the providers, peers and customers than all
+            nodes in the SCC would have. These providers, peers, and customers
+            point to the new super node.
 
-    '''
+        """
+
         print("\tCombining Components")
         #TODO allow for announcements with known paths to be given to large components
         large_components = list()
@@ -43,10 +44,18 @@ class AS_Graph:
             #grab ASN of first AS in component
             new_asn = self.ases[component[0]].asn
             combined_AS = AS(new_asn)
+            combined_cust_anns = list()
+            combined_peer_prov_anns = list()
 
             #get providers, peers, customers from "inner" ASes
             #only if they aren't also in "inner" ASes
             for asn in component:
+
+                if(self.ases[asn].anns_from_customers):
+                    combined_cust_anns.extend(self.ases[asn].anns_from_customers)
+                if(self.ases[asn].anns_from_peers_providers):
+                    combined_peer_prov_anns.extend(self.ases[asn].anns_from_peers_providers)
+
                 for provider in self.ases[asn].providers:
                     if(provider not in component):
                         combined_AS.add_neighbor(provider, 0)
@@ -68,6 +77,8 @@ class AS_Graph:
                         cust_AS.providers.remove(asn)
                         cust_AS.append_no_dup(cust_AS.providers,new_asn)
                 self.ases.pop(asn,None)
+            combined_AS.anns_from_customers = combined_cust_anns
+            combined_AS.anns_from_peers_providers = combined_peer_prov_anns
             self.ases[combined_AS.asn] = combined_AS
             progress.update()
         print()
