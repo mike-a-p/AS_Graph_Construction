@@ -14,7 +14,7 @@ import json
 from AS_Graph import AS_Graph
 from AS import AS
 from Announcement import Announcement
-
+from Recipient_List import Recipient_List
 
 def rec_from(as_path,as_graph):
     """Finds the relationship of the current AS in as_path to the previous AS
@@ -198,8 +198,7 @@ def best_by_length(announcements):
     return best
 
 def prop_one_announcement(asn,as_graph,ann,ann_dict, to_peer_provider = None, 
-        to_customer = None, ases_with_customer_announcements = None, 
-        ases_with_provider_announcements = None):
+        to_customer = None):
     """Send a single announcement to neighbors depending on arguments
 
     Args:
@@ -224,54 +223,73 @@ def prop_one_announcement(asn,as_graph,ann,ann_dict, to_peer_provider = None,
         make arguments more readable on call
 
     """
-    
-    send_to = list()
+    #TODO maybe replace 1s and 0s with Python booleans for readability
+    #TODO make this code shorter
+    send_to = Recipient_List()
     #start appending neighbors to "send_to" if they haven't already received it
-    for neighbor in as_graph[asn]:
-        
-        #check for announcements that match "ann" (origin and prefix)
-        #could be expedited if announcements were organized
+    send_to_filtered = Recipient_List()
+
+    if(to_peer_provider is not None):
+        for peer in as_graph.ases[asn].peers:
+            send_to.peers.append(peer)
+       	for provider in as_graph.ases[asn].providers:
+            send_to.providers.append(provider)
+    if(to_customer is not None):
+        for customer in as_graph.ases[asn].peers:
+            send_to.customers.append(customer)
+
+    for provider in send_to.providers:
         already_received = 0
-        if(neighbor.asn in ann_dict):
-            for neighbor_ann in ann_dict[neighbor.asn]:
-                if(neighbor_ann.origin == ann.origin and neighbor_ann.prefix == ann.prefix):
-                    already_received = 1
-                    break
-        #if neighbor already received announcement, skip to next neighbor
-        if(already_received == 1):
-            continue
-        
-        #append to "send_to" depending on propagation type (to_peer_provider, to_customer)
-        #0/1/2 represents provider/peer/customer
-        if(to_peer_provider is not None):
-            if(neighbor.relationship == 0):
-                send_to.append(neighbor.asn)
-                #sent to provider, record provider as having customer ann
-                append_without_duplicates(ases_with_customer_announcements, neighbor.asn)
-            if(neighbor.relationship == 1):
-                send_to.append(neighbor.asn)
-        if(to_customer is not None):
-            if(neighbor.relationship == 2):
-                send_to.append(neighbor.asn)
-                #sent to customer, record customer as having provider ann
-                append_without_duplicates(ases_with_provider_announcements, neighbor.asn)  
-                
-    #begin propagating "send_to" list           
-    for recipient in send_to:
-        #amend path to include recipient AS
-        new_path = [recipient] + ann.as_path  
-        #get received_from using new path
-        received_from = rec_from(new_path,as_graph)
-        #form an Announcement namedtuple using new arguments
-        this_ann = named_tup.Announcement(ann.origin, ann.prefix, None, received_from, None, new_path)
-        #append the updated announcement to the recipient in ann_dict
-        append_announcement(ann_dict, recipient, this_ann)
+        all_neighbor_anns =(as_graph.ases[provider].anns_from_customers +
+                             as_graph.ases[provider].anns_from_peers_providers)
+        for neighbor_ann in all_neighbor_anns:
+            if((neighbor_ann.origin == ann.origin) and 
+                (neighbor_ann.prefix == ann.prefix)):
+                already_received = 1
+                break
+        if(not already_receieved):
+            send_to_filtered.providers.append(provider)
+
+    for peer in send_to.peers:
+        already_received = 0
+        all_neighbor_anns =(as_graph.ases[peer].anns_from_customers +
+                             as_graph.ases[peer].anns_from_peers_providers)
+        for neighbor_ann in all_neighbor_anns:
+            if((neighbor_ann.origin == ann.origin) and 
+                (neighbor_ann.prefix == ann.prefix)):
+                already_received = 1
+                break
+        if(not already_receieved):
+            send_to_filtered.peers.append(peer)
+
+    for customer in send_to.customers:
+        already_received = 0
+        all_neighbor_anns =(as_graph.ases[customer].anns_from_customers +
+                             as_graph.ases[customer].anns_from_peers_providers)
+        for neighbor_ann in all_neighbor_anns:
+            if((neighbor_ann.origin == ann.origin) and 
+                (neighbor_ann.prefix == ann.prefix)):
+                already_received = 1
+                break
+        if(not already_receieved):
+            send_to_filtered.customers.append(customer)
+
+    #Integer arguments 2/1/0 are for "received from" customer/peer/provider
+    for provider in send_to_filtered.providers:
+        this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, ann.as_path_length + 1)
+        append_announcement(graph.ases, provider, this_ann)
+    for peer in send_to_filtered.peers:
+        this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1, None, ann.as_path_length + 1)
+        append_announcement(graph.ases, provider, this_ann)
+    for customer in send_to_filtered.peers:
+        this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0, None, ann.as_path_length + 1)
+        append_announcement(graph.ases, provider, this_ann)
+
     return
   
   
                    
-def prop_anns_from_customers_to_peers_providers(ann_dict,as_graph,
-                                    ases_with_customer_announcements):
+def prop_anns_from_customers_to_peers_providers(as_graph):
     """Propagate announcements that came from customers to peers and providers
     
     Args:
@@ -292,30 +310,16 @@ def prop_anns_from_customers_to_peers_providers(ann_dict,as_graph,
     """
     
     print("\tPropagating Announcements From Customers")
-    #loop as long as ASes have new customer announcements
-    while(ases_with_customer_announcements): 
-        #make a copy to not iterate a changing list
-        current_list = ases_with_customer_announcements.copy()
-        #clear ases_with_customer_announcements, it will be added to
-        ases_with_customer_announcements.clear()
-        
-        #for each AS known to have customer announcements
-        for asn in current_list:
-            #collect all announcements from customers
-            anns_from_customers = list()           
-            for ann in ann_dict[asn]:
-                if(ann.rec_from == 2):
-                    anns_from_customers.append(ann)   
-            #if any announcements were collected, get the best for each prefix   
-            if(len(anns_from_customers)>0):
-                best_anns_from_customers = best_from_multiple_prefixes(anns_from_customers,1)
-                #propagate the best customer sourced announcement for each prefix
-                for ann in best_anns_from_customers:
-                    #PARAMETERS
-                    #(asn, as_graph, ann, ann_dict, to_peer_provider=None,
-                    #to_customers=None,ases_with_customer_announcements=None, 
-                    #ases_with_provider_announcements=None)
-                    prop_one_announcement(asn, as_graph, ann, ann_dict, 1, None,                                        ases_with_customer_announcements)
+    for level in ases_by_rank:
+        for asn in level:
+            #TODO throw out "bad" announcements when picking best
+            #filter out best announcements from customers
+            cust_anns = self.ases[asn].anns_from_customers
+            best_anns_from_customers = best_from_multiple_prefixes(cust_anns,1)
+            #if any announcements were collected, get the best for each prefix  
+            #propagate the best customer sourced announcement for each prefix
+            for ann in best_anns_from_customers:
+                prop_one_announcement(asn, as_graph, ann, ann_dict, 1, None)
     return
 
 def give_ann_to_as_path(as_path, prefix, hop, as_graph, 
@@ -346,6 +350,8 @@ def give_ann_to_as_path(as_path, prefix, hop, as_graph,
     i = 0
     #as_path is ordered right to left, so rev_path is the reverse
     rev_path = as_path[::-1]
+
+    ases_with_anns = list()
     for asn in rev_path:
     #TODO order ases_with_anns
         if(asn in ases_with_anns):
@@ -374,15 +380,20 @@ def give_ann_to_as_path(as_path, prefix, hop, as_graph,
 
         #path for current AS removes "future" ASes
         this_path_len = i + 1
-        #received_from (relationship to previous AS in as_path) retrieved from rec_from()
-        received_from = rec_from(this_path,as_graph)
-        #if received_from is customer (2) append this ASN to ases_with_customer_annnouncements
-#        if(received_from == 2):
- #           append_without_duplicates(ases_with_customer_announcements, asn)
-        #create announcement named tuple using new path, sent_to, and received_from
+
+        if(i > 1):
+            if(rev_path[i-1] in as_graph[asn].providers):
+                received_from = 0
+            if(rev_path[i-1] in as_graph[asn].peers):
+                received_from = 1
+            if(rev_path[i-1] in as_graph[asn].customers):
+                received_from = 2
+        else: received_from = None
+
         announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,this_path_len)
         #append new announcement to ann_dict
-        as_graph[asn].give_announcement(announcement)
+        as_graph.ases[asn].give_announcement(announcement)
+        ases_with_anns.append(asn)
         #increment i for path traversal
        	i = i + 1
     return
@@ -467,64 +478,51 @@ def start_prop(output_file = None, as_graph = None, cursor = None):
 #as_graph format is key: {(ASN,relationship)}, where relationship is 0/1/2, provider/peer/customer
 
     ann_dict = dict()
-    ases_with_customer_announcements = list()
 
     if(as_graph is None):
         as_graph = AS_Graph()
         for i in range(1,14):
             as_graph.ases[i] = AS(i)    
-
-
-    #Small manually made graph for small scale testing
-    graph.ases[1].add_neighbor(2,2)
-    graph.ases[2].add_neighbor(1,0)
-    graph.ases[2].add_neighbor(3,2)
-    graph.ases[3].add_neighbor(2,0)
-    graph.ases[3].add_neighbor(4,2)
-    graph.ases[4].add_neighbor(3,0)
-    graph.ases[4].add_neighbor(5,0)
-    graph.ases[4].add_neighbor(8,0)
-    graph.ases[5].add_neighbor(4,2)
-    graph.ases[5].add_neighbor(6,0)
-    graph.ases[6].add_neighbor(5,2)
-    graph.ases[6].add_neighbor(7,1)
-    graph.ases[7].add_neighbor(6,1)
-    graph.ases[8].add_neighbor(4,2)
-    graph.ases[8].add_neighbor(9,2)
-    graph.ases[8].add_neighbor(10,0)
-    graph.ases[9].add_neighbor(8,0)
-    graph.ases[10].add_neighbor(8,2)
-    graph.ases[10].add_neighbor(11,0)
-    graph.ases[10].add_neighbor(12,2)
-    graph.ases[11].add_neighbor(10,2)
-    graph.ases[12].add_neighbor(10,0)
-    graph.ases[12].add_neighbor(13,0)
-    graph.ases[13].add_neighbor(12,2)
-   
-            ##################################################
-            #converts as_graph entries to named tuples
-    for asn in as_graph.ases:
-        newlist = list()
-        neighbors = as_graph.ases[asn]
-        for pair in neighbors:
-            pair = named_tup.Relationship(*pair)
-            newlist.append(pair)
-            as_graph.ases[asn] = newlist
+        #Small manually made graph for small scale testing
+        as_graph.ases[1].add_neighbor(2,2)
+        as_graph.ases[2].add_neighbor(1,0)
+        as_graph.ases[2].add_neighbor(3,2)
+        as_graph.ases[3].add_neighbor(2,0)
+        as_graph.ases[3].add_neighbor(4,2)
+        as_graph.ases[4].add_neighbor(3,0)
+        as_graph.ases[4].add_neighbor(5,0)
+        as_graph.ases[4].add_neighbor(8,0)
+        as_graph.ases[5].add_neighbor(4,2)
+        as_graph.ases[5].add_neighbor(6,0)
+        as_graph.ases[6].add_neighbor(5,2)
+        as_graph.ases[6].add_neighbor(7,1)
+        as_graph.ases[7].add_neighbor(6,1)
+        as_graph.ases[8].add_neighbor(4,2)
+        as_graph.ases[8].add_neighbor(9,2)
+        as_graph.ases[8].add_neighbor(10,0)
+        as_graph.ases[9].add_neighbor(8,0)
+        as_graph.ases[10].add_neighbor(8,2)
+        as_graph.ases[10].add_neighbor(11,0)
+        as_graph.ases[10].add_neighbor(12,2)
+        as_graph.ases[11].add_neighbor(10,2)
+        as_graph.ases[12].add_neighbor(10,0)
+        as_graph.ases[12].add_neighbor(13,0)
+        as_graph.ases[13].add_neighbor(12,2)
+        
     start_time = time.time()
 
     if(cursor == None):
         announcements = list()
         #Announcements from DB come in form (PRIMARY KEY,Type, ASN, Address, AS_PATH, prefix, NEXT_HOP (IP), Record ID)
-        record1 = (1,'A',5,"192.168.1.1",[5,4,3,2,1],'111.111.111/20','197.50.78.101',12)
-        record2 = (1,'A',5,"192.168.1.1",[7,6,1],'222.222.222/20','197.50.78.101',13)
-        record3 = (1,'A',3,"192.168.1.1",[51,5,52],'333.333.333/20','197.50.78.101',13)
-        announcements.extend((record1,record2,record3))   
+        record1 = (1,'A',11,"192.168.1.1",[12,11],'111.111.111/20','197.50.78.101',12)
+        record2 = (1,'A',10,"192.168.1.1",[10,5,1,2,3],'222.222.222/20','197.50.78.101',13)
+        announcements.extend((record1,record2))   
     else:
         announcements = SQL_functions.select_announcements(cursor)
     
     for ann in announcements:
         #DB can be changed to return named items rather than only indexed
-        give_ann_to_as_path(ann[4],ann[5], ann[6], as_graph, ann_dict, ases_with_customer_announcements)
+        give_ann_to_as_path(ann[4],ann[5], ann[6], as_graph, ann_dict)
             
     prop_anns_sent_to_peers_providers(ann_dict,as_graph.ases, ases_with_customer_announcements)
     prop_anns_from_customers_to_peers_providers(ann_dict, as_graph.ases, ases_with_customer_announcements)
