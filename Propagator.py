@@ -209,9 +209,6 @@ class Propagator:
 
         Args:
             asn(:obj:`int`): ASN of AS sending announcement.
-            as_graph(:obj:`dict` of :obj:`list` of :obj:`named_tup.Relationship`) 
-                a dictionary using ASNs as keys and values being lists of
-                relationship information.
             ann(:obj:`named_tup.Announcement`): namedtuple containing announcement
                 data.
             to_peer_provider(:obj:`int`, optional):Identification of whether or
@@ -289,16 +286,6 @@ class Propagator:
     def propagate_up(self):
         """Propagate announcements that came from customers to peers and providers
         
-        Args:
-            ann_dict(:obj:`dict` of :obj:`list` of :obj:`named_tup.Announcement`): 
-                dictionary using ASNs as keys with values being lists of 
-                announcements that AS has received.
-            as_graph(:obj:`dict` of :obj:`list` of :obj:`named_tup.Relationship`) 
-                Dictionary using ASNs as keys and values being lists of
-                relationship data.
-            ases_with_customer_announcements(:obj:`list`, optional):
-                a list of ASNs for ASes that have announcements from customers.
-        
         Todo:
             Only keep best announcements of different prefix/origins/second_AS
 
@@ -346,7 +333,7 @@ class Propagator:
         #TODO order ases_with_anns
             if(asn in self.ases_with_anns):
                 #If AS has already recorded origin/prefix pair, stop
-                for ann2 in as_graph.ases[asn].all_announcements():
+                for ann2 in graph.ases[asn].all_announcements():
                     #compare the origin to the first AS in rev_path and prefix to prefix
                     if(ann2.origin==rev_path[0] and ann2.prefix==prefix):
                         return

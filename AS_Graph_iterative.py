@@ -10,10 +10,10 @@ class AS_Graph:
     def __init__(self):
         self.ases = dict()
         self.ases_with_anns = list()
-        self.ases_by_rank = list()
+        self.ases_by_rank = dict()
         self.strongly_connected_components = list()
 
-    def __str__(self):
+    def __repr__(self):
         return str(self.ases)
 
     def rank(self):
@@ -27,6 +27,7 @@ class AS_Graph:
             These super nodes have the providers, peers and customers than all
             nodes in the SCC would have. These providers, peers, and customers
             point to the new super node.
+
 
         """
 
@@ -77,6 +78,24 @@ class AS_Graph:
                         cust_AS.providers.remove(asn)
                         cust_AS.append_no_dup(cust_AS.providers,new_asn)
                 self.ases.pop(asn,None)
+
+            all_combined_anns = combined_cust_anns + combined_peer_prov_anns
+            num_anns = len(all_combined_anns)
+            duplicate_anns = list()
+            for i in range(num_anns):
+                for j in range(i+1,num_anns):
+                    if(all_combined_anns[i].prefix == all_combined_anns[j].prefix
+                        and all_combined_anns[i].origin == all_combined_anns[j].origin):
+                        if(all_combined_anns[i].as_path_length < all_combined_anns[j].as_path_length):
+                            duplicate_anns.append(all_combined_anns[i])
+                        else:
+                            duplicate_anns.append(all_combined_anns[j])
+            for dup in duplicate_anns:
+                if dup in combined_cust_anns:
+                    combined_cust_anns.remove(dup)
+                if dup in combined_peer_prov_anns:
+                    combined_peer_prov_anns.remove(dup)
+
             combined_AS.anns_from_customers = combined_cust_anns
             combined_AS.anns_from_peers_providers = combined_peer_prov_anns
             self.ases[combined_AS.asn] = combined_AS
@@ -157,21 +176,20 @@ class AS_Graph:
 
     def decide_ranks(self):
         customer_ases = list()
-        ases_by_rank = dict()
 
         for asn in self.ases:
             if(not self.ases[asn].customers):
                 customer_ases.append(asn) 
                 self.ases[asn].rank = 0
-        ases_by_rank[0] = customer_ases
+        self.ases_by_rank[0] = customer_ases
 
         for i in range(1000):
             ases_at_rank_i_plus_one = list()
 
-            if(i not in ases_by_rank):
-                return ases_by_rank
+            if(i not in self.ases_by_rank):
+                return self.ases_by_rank
 
-            for asn in ases_by_rank[i]:
+            for asn in self.ases_by_rank[i]:
                 for provider in self.ases[asn].providers:
                     prov_AS = self.ases[provider]
                     if(prov_AS.rank is None):
@@ -189,9 +207,8 @@ class AS_Graph:
                             self.ases[provider].rank = i + 1
                             self.append_no_dup(ases_at_rank_i_plus_one,provider)
             if(ases_at_rank_i_plus_one):
-                ases_by_rank[i+1] = ases_at_rank_i_plus_one
-        self.ases_by_rank = ases_by_rank
-        return ases_by_rank
+                self.ases_by_rank[i+1] = ases_at_rank_i_plus_one
+        return self.ases_by_rank
          
 
     def append_no_dup(self, this_list, asn, l = None, r = None):

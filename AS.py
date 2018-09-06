@@ -10,6 +10,7 @@ class AS:
 		self.customers = list()
 		self.anns_from_customers = list()
 		self.anns_from_peers_providers = list()
+		self.anns_sent_to_peers_providers = list()
 		#variables for Tarjan's Alg
 		self.index = None
 		self.lowlink = None
