@@ -9,7 +9,7 @@ May Require 'psycopg2'
 import sys
 import time
 import named_tup
-import SQL_functions
+import SQL_querier
 import json
 from AS_Graph_iterative import AS_Graph
 from AS import AS
@@ -22,78 +22,6 @@ class Propagator:
         self.graph = graph
         self.ases_with_anns = list()
 
-    def rec_from(self, as_path,as_graph):
-        """Finds the relationship of the current AS in as_path to the previous AS
-        
-        Args:
-            as_path (:obj:`list` of :obj:`int`): ASNs showing the path taken by
-                an announcement. Leftmost being the most recent.
-                
-            as_graph (:obj:`dict` of :obj:`list` of :obj:`named_tup.Relationship`) 
-                Dictionary using ASNs as keys and values being lists of
-                tuples with relationship data.
-            
-        Returns: 
-            (:obj:`int`,optional): 
-                The relationship to the AS previously in as_path. 0/1/2 for
-                provider/peer/customer of the current AS. Returns None if there 
-                is no previous AS.
-
-        """
-
-        received_from = None
-        #If path is 1 AS, return None
-        if(len(as_path)==1):
-            return received_from
-        
-        #For all neighbors in graph, check if they match the neighbor in path
-        #When the correct neighbor is found, return the relationship
-        #TODO sort neighbors to make this faster
-        for provider in as_graph.ases[as_path[0]]:
-            if(provider == as_path[1]):
-                received_from = 0
-                return received_from
-        for peer in as_graph.ases[as_path[0]]:
-            if(peer == as_path[1]):
-                received_from = 1
-                return received_from
-        for customer in as_graph.ases[as_path[0]]:
-            if(customer == as_path[1]):
-                received_from = 2
-                return received_from
-
-    def append_without_duplicates(self, this_list, asn, l = None, r = None):
-        """Uses a binary search algorithm to insert an integer (asn) into a list 
-            (this_list) with no duplicates.
-        
-        Args:
-            this_list (:obj:`list` of :obj:`int`): Sorted list of integers
-            asn (:obj:`int`): Integer to insert into the sorted list
-            l (:obj:`int`, optional): Left index in binary search
-            r (:obj:`int`, optional): Right index in binary search
-        
-        """
-        
-        #initialize l and r on first call
-        if(l is None and r is None):
-                l = 0
-                r = len(this_list)-1
-        #if r is greater than l, continue binary search
-        if(r>=l):
-                half = int(l + (r-l)/2)
-                #if asn is found in the list, return without inserting
-                if(this_list[half] == asn):
-                        return
-                elif(this_list[half] > asn):
-                        return append_without_duplicates(this_list, asn, l, half-1)
-                else:
-                        return append_without_duplicates(this_list, asn, half+1, r)
-        #if r is less than l, insert asn
-        else:
-                this_list[r+1:r+1] = [asn]
-        return
-
-    #PROBABLY NOT USING ANYMORE
     def append_announcement(self, some_dict,key, announcement):
         """Adds an announcement to a dictionary
             
@@ -256,7 +184,7 @@ class Propagator:
                     (neighbor_ann.prefix == ann.prefix)):
                     already_received = 1
                     break
-            if(not already_receieved):
+            if(not already_received):
                 send_to_filtered.peers.append(peer)
 
         for customer in send_to.customers:
@@ -333,7 +261,7 @@ class Propagator:
         #TODO order ases_with_anns
             if(asn in self.ases_with_anns):
                 #If AS has already recorded origin/prefix pair, stop
-                for ann2 in graph.ases[asn].all_announcements():
+                for ann2 in self.graph.ases[asn].all_announcements():
                     #compare the origin to the first AS in rev_path and prefix to prefix
                     if(ann2.origin==rev_path[0] and ann2.prefix==prefix):
                         return
@@ -396,6 +324,7 @@ class Propagator:
         """Iteratively send the best announcements at every AS to customers
 
         """
+        print("Propagating Announcements To Customers")
         #TODO throw out "bad" announcements when best are picked
         progress = progress_bar(len(self.graph.ases_by_rank))
         for level in reversed(range(len(self.graph.ases_by_rank))):
@@ -409,7 +338,7 @@ class Propagator:
         print()
         return
 
-    def insert_announcements(self,cursor = None,num_announcements = None):
+    def insert_announcements(self,use_db = None, num_announcements = None):
         """Begins announcement propagation
             
             Calls:
@@ -436,14 +365,15 @@ class Propagator:
     #as_graph format is key: {(ASN,relationship)}, where relationship is 0/1/2, provider/peer/customer           
         start_time = time.time()
 
-        if(cursor == None):
+        if(use_db == None):
             announcements = list()
             #Announcements from DB come in form (PRIMARY KEY,Type, ASN, Address, AS_PATH, prefix, NEXT_HOP (IP), Record ID)
             record1 = (1,'A',11,"192.168.1.1",[12,11],'111.111.111/20','197.50.78.101',12)
             record2 = (1,'A',10,"192.168.1.1",[10,5,1,2,3],'222.222.222/20','197.50.78.101',13)
             announcements.extend((record1,record2))   
         else:
-            announcements = SQL_functions.select_announcements(cursor)
+            querier = SQL_querier()
+            announcements = querier.select_announcements()
         i = 0
         for ann in announcements:
             if(i == num_announcements):

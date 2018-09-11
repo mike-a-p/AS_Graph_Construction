@@ -3,12 +3,12 @@ import psutil
 import time
 import sys
 import psycopg2
-import SQL_functions
+import SQL_querier
 import named_tup
 from AS import AS
 from AS_Graph_iterative import AS_Graph
 from progress_bar import progress_bar
-
+from SQL_querier import SQL_querier
 
 def  add_neighbor(graph,asn,neighbor,relation):
     """Adds an AS relationship to the provided graph (dictionary)
@@ -46,7 +46,7 @@ def printDict(graph):
     return
 
 #Creates a graph of ASes out of a dictionary / hash table
-def create_relationship_graph(cursor, num_entries = None):
+def create_relationship_graph(num_entries = None):
     """Creates and fills a dictionary with AS relationships
     
         e.g. as_graph[asn_0] = [(asn_1,relation_1),...,(asn_k,relation_k)]
@@ -69,8 +69,9 @@ def create_relationship_graph(cursor, num_entries = None):
 #    if(num_entries is not None):
  #       cursor = SQL_functions.select_relationships(cursor,num_entries)
   #  else:
-    numLines = SQL_functions.count_entries(cursor, 'relationships')
-    cursor = SQL_functions.select_relationships(cursor)
+    querier = SQL_querier()
+    numLines = querier.count_entries('relationships')
+    records = querier.select_relationships(num_entries)
 
     print("\tFilling Graph...")
     graph = AS_Graph()
@@ -83,7 +84,7 @@ def create_relationship_graph(cursor, num_entries = None):
     else:
         progress = progress_bar(numLines)
     
-    for record in cursor:
+    for record in records:
         named_r = named_tup.Relationship(*record)
         #If it's not a cone
         if named_r.cone_as is None:
