@@ -6,7 +6,8 @@ from lib_bgp_data import Database
 
 class SQL_querier:
     def __init__(self):
-        self.database = Database()
+#        self.database = Database()
+        self.cursor = self.connect()
 
     def close(self,cur,conn):
         """Cleans up database connection
@@ -20,6 +21,16 @@ class SQL_querier:
         cur.close()
         conn.close()
         return
+
+    def connect(self):
+        username = "bgp_user"
+        password = "Mta8Avm55zUCYtnDz"
+        database = "bgp"
+        host = "localhost"
+
+        conn = psycopg2.connect(host = host, database = database, user = username, password = password)
+        cursor = conn.cursor()
+        return cursor
 
     def select_relationships(self,num_entries = None):
         """Points cursor to relationships table
@@ -43,13 +54,26 @@ class SQL_querier:
             print("\tSelecting All Relationship Records...")
             sql = """ SELECT * FROM as_relationships;"""
             data = None
+            self.cursor.execute(sql)
         else:
             print("\tSelecting " + str(num_entries) + " Relationship Records...")
             sql = """SELECT * FROM as_relationships LIMIT (%s)"""
             data = (num_entries,)
-        
-        records = self.database.execute(sql,data)
-        return records
+        records = self.cursor.execute(sql,data) 
+        #records = self.database.execute(sql,data) 
+        return
+
+    def select_customer_providers(self):
+        print("\tSelecting Customer-Provider Relationship Records...")
+        sql = """ SELECT * FROM customer_providers;"""
+        self.cursor.execute(sql)
+        return
+
+    def select_peers(self):
+        print("\t Selecting Peer-Peer Relationship Records...")
+        sql = """ SELECT * FROM peers;"""
+        self.cursor.execute(sql)
+        return
 
     def select_announcements(self,num_entries = None):
         """Points cursor to announcements (elements) table
@@ -87,13 +111,18 @@ class SQL_querier:
         """
         print("\tCounting Entries...")
         if(table == 'relationships'):
-            numLines = self.database.execute("SELECT COUNT(*) FROM as_relationships;")
-        if(table == 'announcements'):
-            numLines = self.database.execute("SELECT COUNT(*) FROM elements;")
-     #  numLines = cur.fetchone()[0]
-        numLines = str(numLines[0])
-        p = re.compile(r'\((\d+),\)') 
-        m = p.match(numLines)
-        numLines = int(m.group(1))
+            numLines = self.cursor.execute("SELECT COUNT(*) FROM as_relationships;")
+        elif(table == 'announcements'):
+            numLines = self.cursor.execute("SELECT COUNT(*) FROM elements;")
+        elif(table == 'customer_providers'):
+            numLines = self.cursor.execute("SELECT COUNT(*) FROM customer_providers;")
+        elif(table == 'peers'):
+            numLines = self.cursor.execute("SELECT COUNT(*) FROM peers;")
+
+        numLines = self.cursor.fetchone()[0]
+#        numLines = str(numLines[0])
+#        p = re.compile(r'\((\d+),\)') 
+#        m = p.match(numLines)
+#        numLines = int(m.group(1))
         print("\t\t" + str(numLines) + " Entries")
         return numLines

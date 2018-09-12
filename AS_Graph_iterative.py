@@ -1,9 +1,13 @@
 import sys
 import os
 import psutil
+import psycopg2
+import named_tup
+import time
 from progress_bar import progress_bar
 from collections import deque
 from AS import AS
+from SQL_querier import SQL_querier
 
 class AS_Graph:
 
@@ -16,7 +20,80 @@ class AS_Graph:
     def __repr__(self):
         return str(self.ases)
 
-    def rank(self):
+    def  add_relationship(self, asn,neighbor,relation):
+        """Adds an AS relationship to the provided graph (dictionary)
+
+        """
+        
+        #append if this key has an entry already, otherwise make new entry
+        if(asn not in self.ases):
+            self.ases[asn] = AS(asn)
+        self.ases[asn].add_neighbor(neighbor,relation)
+        return
+
+    def read_relationships_from_db(self,num_entries = None):
+        sys.stdout.write("Initializing Relationship Graph\n")
+
+        #Select as_relationships table
+        querier = SQL_querier()
+       	if(num_entries is not None):
+            querier.select_relationships(num_entries)
+        else:
+            numLines = querier.count_entries('relationships')
+            querier.select_relationships()
+
+        print("\tFilling Graph...")
+
+        #Progress bar setup 
+        start_time = time.time()
+        if(num_entries is not None):
+            i = 0
+            progress = progress_bar(num_entries)
+        else:
+            progress = progress_bar(numLines)
+        
+        for record in querier.cursor:
+            named_r = named_tup.Relationship(*record)
+            #If it's not a cone
+            if named_r.cone_as is None:
+                #If it's peer-peer (no customer)
+                if(named_r.customer_as is None):
+                    self.add_relationship(named_r.peer_as_1,named_r.peer_as_2,1)
+                    self.add_relationship(named_r.peer_as_2,named_r.peer_as_1,1)
+                #if it's provider-consumer
+                if(named_r.provider_as is not None):
+                    self.add_relationship(named_r.customer_as[0],named_r.provider_as,0)
+                    self.add_relationship(named_r.provider_as,named_r.customer_as[0],2)
+            progress.update()
+
+            if(num_entries is not None):
+                i = i + 1
+                if(i>num_entries):
+                    break
+
+        neighbor_time = time.time()
+        sys.stdout.write('\n')
+        #cursor.close()
+
+        return
+
+    def read_seperate_relationships_from_db(self):
+        print("Initializing Relationship Graph")
+        querier = SQL_querier()
+
+        numLines = querier.count_entries('customer_providers')
+        querier.select_customer_providers()
+        for record in querier.cursor:
+            self.add_relationship(record[1],record[2],0)
+            self.add_relationship(record[2],record[1],2)
+
+        numLines = querier.count_entries('peers')
+        querier.select_peers()
+        for record in querier.cursor:
+            self.add_relationship(record[1],record[2],1)
+            self.add_relationship(record[2],record[1],1)
+
+    def assign_ranks(self):
         self.find_strong_conn_components()
         self.combine_components()
         self.decide_ranks()

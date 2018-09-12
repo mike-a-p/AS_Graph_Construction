@@ -17,10 +17,19 @@ from Announcement import Announcement
 from Recipient_List import Recipient_List
 from progress_bar import progress_bar
 
-class Propagator:
-    def __init__(self,graph):
-        self.graph = graph
+class extrapolator:
+    def __init__(self):
+        self.graph = AS_Graph()
+        self.graph.read_seperate_relationships_from_db()
         self.ases_with_anns = list()
+    
+    def perform_propagation(self,num_announcements):
+        self.insert_announcements(num_announcements)
+        self.graph.assign_ranks()
+        self.prop_anns_sent_to_peers_providers()
+        self.propagate_up()
+        self.propagate_down()
+        return
 
     def append_announcement(self, some_dict,key, announcement):
         """Adds an announcement to a dictionary
@@ -227,8 +236,8 @@ class Propagator:
                 #filter out best announcements from customers
                 cust_anns = self.graph.ases[asn].anns_from_customers
                 best_anns_from_customers = self.best_from_multiple_prefixes(cust_anns,1)
-                #if any announcements were collected, get the best for each prefix  
-                #propagate the best customer sourced announcement for each prefix
+                #"non best" announcements are discarded
+                self.graph.ases[asn].anns_from_customers = best_anns_from_customers
                 for ann in best_anns_from_customers:
                     self.prop_one_announcement(asn, ann, 1, None)
             progress.update()
@@ -330,6 +339,10 @@ class Propagator:
         for level in reversed(range(len(self.graph.ases_by_rank))):
             for asn in self.graph.ases_by_rank[level]:
                 this_as = self.graph.ases[asn]
+                
+                best_anns_from_peers_providers = best_from_multiple_prefixes(this_as.anns_from_peers_providers)
+                #"non best" announcements from peers and providers are discarded
+                this_as.anns_from_peers_providers = best_anns_from_peers_providers
                 best_announcements = self.best_from_multiple_prefixes(this_as.anns_from_customers +
                                                               this_as.anns_from_peers_providers)
                 for ann in best_announcements:
