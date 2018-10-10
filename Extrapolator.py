@@ -9,7 +9,7 @@ May Require 'psycopg2'
 import sys
 import time
 import named_tup
-import SQL_querier
+from SQL_querier import SQL_querier
 import json
 from AS_Graph_iterative import AS_Graph
 from AS import AS
@@ -18,17 +18,51 @@ from Recipient_List import Recipient_List
 from progress_bar import progress_bar
 
 class extrapolator:
-    def __init__(self):
-        self.graph = AS_Graph()
-        self.graph.read_seperate_relationships_from_db()
+    def __init__(self, ann_table_name = None, graph_table_name = None, save_to_db = None,):
+        #extrapolator can be given a graph to use
+        self.ann_table_name = ann_table_name
+        self.save_to_db = save_to_db
+        #if test_data is anything but True, real data is used
+        self.graph = AS_Graph(graph_table_name)
         self.ases_with_anns = list()
-    
-    def perform_propagation(self,num_announcements):
+        self.querier = SQL_querier()
+        return
+
+    def update_graph(self,peers_table_name = None, customer_provider_table_name = None,
+                        no_ranks = None):
+        #Graph is updated using one-to-one relationships stored in DB.
+        #Newly constructed graph is assigned ranks (which includes combining
+        #strongly connected components).
+        if(peers_table_name and customer_provider_table_name):
+            self.graph.read_seperate_relationships_from_db(peers_table_name,
+                                                customer_provider_table_name)
+        else:
+            self.graph.read_seperate_relationships_from_db()
+        if(not no_ranks):
+            self.graph.assign_ranks()
+        if(self.save_to_db):
+            self.graph.save_graph_to_db()
+        return
+        
+    def perform_propagation(self,num_announcements = None):
+        """Performs announcement propagation and uploads results to database.
+            :meth:`~insert_announcements()`\n 
+            :meth:`~prop_anns_sent_to_peers_providers()`\n
+            :meth:`~propagate_up()`\n
+            :meth:`~propagate_down()`\n
+            :meth:`~upload_to_db()`\n
+
+        Args:
+            use_db (:obj:`int` or `boolean`): Signifies using database to gather data.
+            num_announcements (:obj:`int`, optional): Number of announcements to propagate.
+
+        """
         self.insert_announcements(num_announcements)
-        self.graph.assign_ranks()
         self.prop_anns_sent_to_peers_providers()
         self.propagate_up()
         self.propagate_down()
+        if(self.save_to_db):
+            self.save_anns_to_db()
         return
 
     def append_announcement(self, some_dict,key, announcement):
@@ -38,10 +72,8 @@ class extrapolator:
             
         Args:
             some_dict (:obj:`dict`): dictionary to append to.
-
             key (:obj:`int`/:obj:`str`): key to use in dictionary
-            announcement (:obj:`named_tup.Announcement`): namedtuple containing
-                announcement data.
+            announcement (:obj:`Announcement`): Announcement to give append
 
         """
         #append if this key has an entry already, otherwise make new entry
@@ -55,15 +87,13 @@ class extrapolator:
         """Finds the best announcements from a list containing multiple prefixes
         
         Args:
-            announcements (:obj:`list` of :obj:`named_tup.Announcement`): namedtuple            containing announcement data.
+            announcements (:obj:`list` of :obj:`Announcement`): Announcements to choose from.
             one_type (:obj:`int`, optional): The presence of this variable 
                 signifies that announcements all come from the same priority AS 
                 e.g. provider, peer, or customer.
         Returns:
-            (:obj:`list` of :obj:`named_tup.Announcement`): A list of namedtuple 
-                containing announcement data.
+            (:obj:`list` of :obj:`Announcement`): A list of announcements, only one per prefix.
 
-        
         """
 
         #initialize list of best announcements
@@ -91,11 +121,10 @@ class extrapolator:
             lengths
         
         Args:
-            announcements (:obj:`list` of :obj:`named_tup.Announcement`): 
-                namedtuple containing announcement data.
+            announcements (:obj:`list` of :obj:`Announcement`): Announcements to choose from.
                 
         Returns:
-            (:obj:`named_tup.Announcement`):namedtuple containing announcement data
+            (:obj:`Announcement`): Single best announcement.
         """
 
         #announcements = announcements of same prefix but different priorities.
@@ -123,12 +152,10 @@ class extrapolator:
         """Finds the announcement with the shortest as_path
         
         Args:
-            announcements (:obj:`list` of :obj:`Announcement`): 
-                namedtuple containing announcement information in format: 
-                'origin prefix sent_to rec_from hop as_path'
+            announcements (:obj:`list` of :obj:`Announcement`): Announcements to choose from.
             
         Returns:
-            (:obj:`Announcement`): Announcement containing announcement data
+            (:obj:`Announcement`): Single best announcement by length of AS_PATH.
         
         """
 
@@ -146,18 +173,13 @@ class extrapolator:
 
         Args:
             asn(:obj:`int`): ASN of AS sending announcement.
-            ann(:obj:`named_tup.Announcement`): namedtuple containing announcement
-                data.
-            to_peer_provider(:obj:`int`, optional):Identification of whether or
+            ann(:obj:`Announcement`): Announcement to send.
+            to_peer_provider(:obj:`int` or :obj: 'bool', optional):Identification of whether or
                 not the announcement is going to peers and providers.
-            to_customer(:obj:`int`, optional):Identification of whether or 
+            to_customer(:obj:`int` or :obj: 'bool', optional):Identification of whether or 
                 not the announcement is going to customers.
 
-        Todo:
-            make arguments more readable on call
-
         """
-        #TODO maybe replace 1s and 0s with Python booleans for readability
         #TODO make this code shorter
         send_to = Recipient_List()
         #start appending neighbors to "send_to" if they haven't already received it
@@ -223,28 +245,25 @@ class extrapolator:
     def propagate_up(self):
         """Propagate announcements that came from customers to peers and providers
         
-        Todo:
-            Only keep best announcements of different prefix/origins/second_AS
-
         """
         
         print("Propagating Announcements From Customers")
+        graph = self.graph
         progress = progress_bar(len(self.graph.ases_by_rank))
         for level in range(len(self.graph.ases_by_rank)):
             for asn in self.graph.ases_by_rank[level]:
-                #TODO throw out "bad" announcements when picking best
                 #filter out best announcements from customers
                 cust_anns = self.graph.ases[asn].anns_from_customers
                 best_anns_from_customers = self.best_from_multiple_prefixes(cust_anns,1)
                 #"non best" announcements are discarded
                 self.graph.ases[asn].anns_from_customers = best_anns_from_customers
+                #send out best announcements
                 for ann in best_anns_from_customers:
                     self.prop_one_announcement(asn, ann, 1, None)
             progress.update()
-        print()
+        progress.finish()
         return
 
-#TODO write this cleaner
     def give_ann_to_as_path(self, as_path, prefix, hop):
         """Record announcement to all ASes on as_path
         
@@ -257,7 +276,6 @@ class extrapolator:
 
         """
      
-        print("\tPlacing Recorded Announcements...")
         #avoids error for anomaly announcement
         if(as_path is None):
                 return
@@ -268,9 +286,12 @@ class extrapolator:
 
         for asn in rev_path:
         #TODO order ases_with_anns
-            if(asn in self.ases_with_anns):
+            if(asn not in self.graph.ases):
+                continue
+            comp_id = self.graph.ases[asn].SCC_id
+            if(comp_id in self.ases_with_anns):
                 #If AS has already recorded origin/prefix pair, stop
-                for ann2 in self.graph.ases[asn].all_announcements():
+                for ann2 in self.graph.ases[comp_id].all_announcements():
                     #compare the origin to the first AS in rev_path and prefix to prefix
                     if(ann2.origin==rev_path[0] and ann2.prefix==prefix):
                         return
@@ -280,34 +301,37 @@ class extrapolator:
                 #similar to rec_from() function, could get own function
                 found_sent_to = 0
                 asn_sent_to = rev_path[i+1]
-                if(asn_sent_to in self.graph.ases[asn].providers):
+                if(asn_sent_to in self.graph.ases[comp_id].providers):
                     sent_to = 0
                     found_sent_to = 1
                 if(not found_sent_to):
-                    if(asn_sent_to in self.graph.ases[asn].peers):
+                    if(asn_sent_to in self.graph.ases[comp_id].peers):
                         sent_to = 1
                         found_sent_to = 1
-                if(found_sent_to == 0):
-                    if(asn_sent_to in self.graph.ases[asn].customers):
+                if(not found_sent_to):
+                    if(asn_sent_to in self.graph.ases[comp_id].customers):
                         sent_to = 2
                         found_sent_to = 1
 
-            #path for current AS removes "future" ASes
             this_path_len = i + 1
 
+            #assign 'received_from' if AS isn't first in as_path
             if(i > 1):
-                if(rev_path[i-1] in self.graph.ases[asn].providers):
+                if(rev_path[i-1] in self.graph.ases[comp_id].providers):
                     received_from = 0
-                if(rev_path[i-1] in self.graph.ases[asn].peers):
+                if(rev_path[i-1] in self.graph.ases[comp_id].peers):
                     received_from = 1
-                if(rev_path[i-1] in self.graph.ases[asn].customers):
+                if(rev_path[i-1] in self.graph.ases[comp_id].customers):
                     received_from = 2
             else: received_from = None
 
             announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,this_path_len)
             #append new announcement to ann_dict
             self.graph.ases[asn].give_announcement(announcement)
-            self.graph.ases[asn].anns_sent_to_peers_providers.append(announcement)
+            #TODO check if this 'if' ammendment works
+            if(sent_to == 1 or sent_to == 0):
+                self.graph.ases[asn].anns_sent_to_peers_providers.append(announcement)
+            #ases_with_anns
             self.ases_with_anns.append(asn)
             #increment i for path traversal
             i = i + 1
@@ -317,30 +341,28 @@ class extrapolator:
         """Send announcements known to be sent to a peer or provider of each AS to
             the other peers and providers of each AS
        
-        Todo:
-            Keep list instead of checking all ASes and announcements for sent_to
 
         """
         print("\tPropagating Announcements Sent to Peers/Providers...")
         
-        #For all ASes with announcements
+        #For all ASes with announcements ( list made in give_anns_to_as_path() )
         for asn in self.ases_with_anns:
             #For all announcements received by an AS
             for ann in self.graph.ases[asn].anns_sent_to_peers_providers:
                     self.prop_one_announcement(asn,ann,1, None)
             return
+
     def propagate_down(self):
-        """Iteratively send the best announcements at every AS to customers
+        """From "top" to "bottom"  send the best announcements at every AS to customers
 
         """
         print("Propagating Announcements To Customers")
-        #TODO throw out "bad" announcements when best are picked
         progress = progress_bar(len(self.graph.ases_by_rank))
         for level in reversed(range(len(self.graph.ases_by_rank))):
             for asn in self.graph.ases_by_rank[level]:
                 this_as = self.graph.ases[asn]
                 
-                best_anns_from_peers_providers = best_from_multiple_prefixes(this_as.anns_from_peers_providers)
+                best_anns_from_peers_providers = self.best_from_multiple_prefixes(this_as.anns_from_peers_providers)
                 #"non best" announcements from peers and providers are discarded
                 this_as.anns_from_peers_providers = best_anns_from_peers_providers
                 best_announcements = self.best_from_multiple_prefixes(this_as.anns_from_customers +
@@ -348,49 +370,54 @@ class extrapolator:
                 for ann in best_announcements:
                     self.prop_one_announcement(asn,ann,None, 1)
             progress.update()
-        print()
+        progress.finish()
         return
 
-    def insert_announcements(self,use_db = None, num_announcements = None):
+    def insert_announcements(self,num_announcements = None):
         """Begins announcement propagation
             
-            Calls:
-                :meth:`~give_ann_to_as_path`\n
-                :meth:`~prop_anns_sent_to_peers_providers`\n
-                :meth:`~prop_anns_from_customers_to_peers_providers`\n
-                :meth:`~prop_best_to_customers`
         Args:
-            as_graph(:obj:`dict` of :obj:`list` of :obj:`named_tup.Relationship`) 
-                Dictionary using ASNs as keys and values being lists of
-                relationship data. If not provided, built in test set will be used.
-            cursor(:obj:`psycopg2 cursor`): cursor that has a connection to 
-                a database containing a table of announcements. If not provided,
-                built in test set will be used.
-        
+            num_announcements (:obj:`int`, optional): Number of announcements to propagate
+      
         """
+
         print("Inserting Announcements...")
 
-    #ann_dict collects all announcements for each AS
-    #ready_dict collects announcements until they are sent
-    #ready_list lists ASes with entries in ready_dict
-
-    #as_graph normally comes from AS_graph_builder but is created manually here
-    #as_graph format is key: {(ASN,relationship)}, where relationship is 0/1/2, provider/peer/customer           
         start_time = time.time()
 
-        if(use_db == None):
-            announcements = list()
-            #Announcements from DB come in form (PRIMARY KEY,Type, ASN, Address, AS_PATH, prefix, NEXT_HOP (IP), Record ID)
-            record1 = (1,'A',11,"192.168.1.1",[12,11],'111.111.111/20','197.50.78.101',12)
-            record2 = (1,'A',10,"192.168.1.1",[10,5,1,2,3],'222.222.222/20','197.50.78.101',13)
-            announcements.extend((record1,record2))   
+        if(self.ann_table_name):
+            records = self.querier.select_table(ann_table_name, num_announcements)
         else:
-            querier = SQL_querier()
-            announcements = querier.select_announcements()
-        i = 0
-        for ann in announcements:
-            if(i == num_announcements):
-                break
-            self.give_ann_to_as_path(ann[4],ann[5], ann[6])
-            i = i + 1
+            records = self.querier.select_table('elements', num_announcements)
+
+        for ann in records:
+            self.give_ann_to_as_path(ann.as_path, ann.prefix, ann.next_hop)
+        return
+
+    def count_asn_conflicts(self):
+        if(self.ann_table_name):
+            records = self.querier.select_table(ann_table_name, num_announcements)
+        else:
+            records = self.querier.select_table('elements', num_announcements)
+        conflict_asns = dict()
+        for ann in records:
+            for asn in ann.as_path:
+                if(asn not in self.graph.ases):
+                    conflict_asns[asn] = True
+        return len(conflict_asns)
+
+    def save_anns_to_db(self):
+        print("Saving Propagation results to DB")
+        progress = progress_bar(len(self.graph.ases))
+        start_time = time.time()
+
+        for asn in self.graph.ases:
+            AS = self.graph.ases[asn]
+            if asn == AS.SCC_id:
+                sql_anns_arg = AS.anns_to_sql()
+                self.querier.insert_to_as_announcements(asn,sql_anns_arg)
+            progress.update()
+        progress.finish()
+        end_time = time.time()
+        print("Time To Save Announcements: " + str(end_time - start_time) + "s")
         return

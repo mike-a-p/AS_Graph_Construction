@@ -1,13 +1,14 @@
 import psycopg2
+import psycopg2.extras
 import re
 from lib_bgp_data import Database
-
+from progress_bar import progress_bar
 #imports should be modified with file rearrangement
 
 class SQL_querier:
     def __init__(self):
-#        self.database = Database()
-        self.cursor = self.connect()
+        self.database = Database(cursor_factory=psycopg2.extras.NamedTupleCursor)
+        return
 
     def close(self,cur,conn):
         """Cleans up database connection
@@ -18,111 +19,104 @@ class SQL_querier:
             conn(:obj:`psycopg2 conn`): conn that holds connection to database.
 
         """
-        cur.close()
-        conn.close()
+    #database currently doesn't have a close() function
+    #    self.database.close()
         return
 
-    def connect(self):
-        username = "bgp_user"
-        password = "Mta8Avm55zUCYtnDz"
-        database = "bgp"
-        host = "localhost"
-
-        conn = psycopg2.connect(host = host, database = database, user = username, password = password)
-        cursor = conn.cursor()
-        return cursor
-
-    def select_relationships(self,num_entries = None):
-        """Points cursor to relationships table
-            
-        Args:
-            cur(:obj:`psycopg2 cursor`): cursor that points to specific database
-                elements.
-            num_entries(:obj:`int`,optional): if only a certain number of entries
-                will be used, only that many will be selected.
-
-        Todo:
-            Modify select_ functions to accept variable table name. Variable
-                substitution for table names currently not accepted by psycopg2.
-
-        Returns:
-            (:obj:`psycopg2 cursor`): cursor that points to specific database
-                elements.
-        """ 
-        #Select All Relationship Records
-        if(num_entries is None):
-            print("\tSelecting All Relationship Records...")
-            sql = """ SELECT * FROM as_relationships;"""
-            data = None
-            self.cursor.execute(sql)
-        else:
-            print("\tSelecting " + str(num_entries) + " Relationship Records...")
-            sql = """SELECT * FROM as_relationships LIMIT (%s)"""
+    def select_table(self, table_name, num_entries = None):
+        data = None
+        if(num_entries):
+            sql = "SELECT * FROM " + table_name +" LIMIT (%s);"
             data = (num_entries,)
-        records = self.cursor.execute(sql,data) 
-        #records = self.database.execute(sql,data) 
-        return
+            print("\tSelecting " + str(num_entries) + " \"" + table_name + "\" Records...")
+        else:
+            sql = "SELECT * FROM " + table_name +";"
+            print("\tSelecting \"" + table_name + "\" Records...")
+        return self.database.execute(sql,data)
 
-    def select_customer_providers(self):
-        print("\tSelecting Customer-Provider Relationship Records...")
-        sql = """ SELECT * FROM customer_providers;"""
-        self.cursor.execute(sql)
-        return
+    def select_row(self,table_name,asn = None, customer_as = None ,provider_as = None):
+        #Finds the row that contains the customer-provider
+        #relationship between two ASes
+        if(asn):
+            sql = "SELECT * FROM " + table_name + " WHERE asn = (%s);"
+            data = (asn,)
+        else:
+            sql = "SELECT * FROM " + table_name + " WHERE customer_as = (%s) AND provider_as = (%s);"
+            data = (customer_as,provider_as)
+        record = self.database.execute(sql,data)
+        return record
 
-    def select_peers(self):
-        print("\t Selecting Peer-Peer Relationship Records...")
-        sql = """ SELECT * FROM peers;"""
-        self.cursor.execute(sql)
-        return
+    def exists_row(self,table_name,asn = None, customer_as = None, provider_as = None):
+        record = self.select_row(table_name,asn,customer_as, provider_as)
+        if(record):
+            exists = True
+        else:
+            exists = False
+        return exists
 
-    def select_announcements(self,num_entries = None):
-        """Points cursor to announcements (elements) table
-            
-        Args:
-            cur(:obj:`psycopg2 cursor`): cursor that points to specific database
-                elements.
-
-        Todo:
-            Modify select_ functions to accept any table name. Variable
-                substitution for table names currently not accepted by psycopg2.
-
-        """
-        print("\tSelecting Announcement Records...")
-        #Select All Announcement Records
-        self.database.execute("""
-                SELECT * FROM elements;
-                """)
-        return cur
-
-    def count_entries(self,table):
+    def count_entries(self,table_name):
         """Counts number of entries in desired table.
 
         Args: 
-            cur(:obj:`psycopg2 cursor`): cursor that points to specific database 
-                elements.
+            table_name (:obj:`str`): name of table to count entries in.
         
-        Todo:
-            Modify function to accept any table name. Variable substitution
-                for table names currently not accepted by psycopg2.
-
         Returns:
-            (:obj:`int`): number of entries found in a given table
+            (:obj:`int`): number of entries found in a given table.
 
         """
-        print("\tCounting Entries...")
-        if(table == 'relationships'):
-            numLines = self.cursor.execute("SELECT COUNT(*) FROM as_relationships;")
-        elif(table == 'announcements'):
-            numLines = self.cursor.execute("SELECT COUNT(*) FROM elements;")
-        elif(table == 'customer_providers'):
-            numLines = self.cursor.execute("SELECT COUNT(*) FROM customer_providers;")
-        elif(table == 'peers'):
-            numLines = self.cursor.execute("SELECT COUNT(*) FROM peers;")
+        sql = "SELECT COUNT(*) FROM " + table_name + ";"
+        numLines = self.database.execute(sql)
 
-        numLines = self.cursor.fetchone()[0]
-#        numLines = str(numLines[0])
-#        p = re.compile(r'\((\d+),\)') 
-#        m = p.match(numLines)
-#        numLines = int(m.group(1))
+        print("\tCounting Entries...")
+
+        #Database class calls fetchall() which returns count in strange format
+        numLines = str(numLines[0])
+        p = re.compile(r'Record\(count=(\d+)\)') 
+        m = p.match(numLines)
+        numLines = int(m.group(1))
         print("\t\t" + str(numLines) + " Entries")
         return numLines
+
+    def insert_to_as_announcements(self,asn, sql_anns):
+        if(exists_row(table_name = 'as_announcements',asn = asn)):
+            sql = ("""UPDATE as_announcements SET announcements = announcements||((%s)::announcement[])
+                    WHERE asn = (%s);""")
+            data = (sql_anns,asn)
+        else:
+            sql = """INSERT INTO as_announcements VALUES ((%s),(%s)::announcement[]);"""
+            data = (asn,sql_anns)
+        self.database.execute(sql,data)
+        return
+
+    def insert_to_test_as_announcements(self,asn, sql_anns_arg):
+        sql = """INSERT INTO test_as_announcements VALUES ((%s),(%s)::announcement[]);"""
+        data = (asn,sql_anns_arg)
+        self.database.execute(sql,data)
+        return
+
+    def insert_as_graph_into_db(self,graph,graph_table_name = None):
+        #TODO implement graph_id programatically, date or something
+        #TODO make test and regular tables follow same schema to clean up code
+
+        progress = progress_bar(len(graph.ases))
+        if(graph_table_name):    
+            sql = "INSERT INTO " + graph_table_name + " VALUES (DEFAULT,(%s),(%s),(%s),(%s),(%s),(%s),(%s));"
+            for asn in graph.ases:
+                AS = graph.ases[asn]
+                if(AS.SCC_id == asn):
+                    members = graph.strongly_connected_components[asn]
+                    data = (asn, AS.customers, AS.peers, AS.providers,members,0,AS.rank)
+                    self.database.execute(sql,data)
+                progress.update()
+        else:
+            sql = """INSERT INTO as_graph VALUES ((%s),(%s),(%s),(%s),(%s),(%s));"""
+            for asn in graph.ases:
+                AS = graph.ases[asn]
+                if(AS.SCC_id == asn):
+                    members = graph.strongly_connected_components[asn]
+                    data = (asn, AS.customers,AS.peers,AS.providers,members,AS.rank)
+                    self.database.execute(sql,data)
+                progress.update()
+        progress.finish()
+        return
+

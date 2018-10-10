@@ -11,11 +11,13 @@ from SQL_querier import SQL_querier
 
 class AS_Graph:
 
-    def __init__(self):
+    def __init__(self, graph_table_name = None):
         self.ases = dict()
         self.ases_with_anns = list()
         self.ases_by_rank = dict()
-        self.strongly_connected_components = list()
+        self.strongly_connected_components = dict()
+        self.graph_table_name = graph_table_name
+        return
 
     def __repr__(self):
         return str(self.ases)
@@ -31,16 +33,51 @@ class AS_Graph:
         self.ases[asn].add_neighbor(neighbor,relation)
         return
 
+    #TODO add param for graph date/version
+    def load_graph_from_db(self):
+        querier = SQL_querier()
+        if(self.graph_table_name):
+            numLines = querier.count_entries(self.graph_table_name)
+            records = querier.select_table(self.graph_table_name)
+        else:
+            numLines = querier.count_entries('as_graph')
+            records = querier.select_table('as_graph')
+        print("\tReading from as_graph table")
+        progress = progress_bar(numLines)
+        for record in records:
+            current_as = AS(record.asn)
+            current_as.customers = record.customers
+            current_as.peers = record.peers
+            current_as.providers = record.providers
+            current_as.SCC_id = record.asn
+            current_as.rank = record.rank
+
+            if(current_as.rank not in self.ases_by_rank):
+                self.ases_by_rank[current_as.rank] = list()
+            self.ases_by_rank[current_as.rank].append(current_as.asn)
+            self.strongly_connected_components[current_as.SCC_id] = record.members
+
+            for asn in record.members:
+                current_as.asn = asn
+                self.ases[asn] = current_as
+            progress.update()
+        progress.finish()
+        return
+
+    def save_graph_to_db(self):
+        querier = SQL_querier()
+        querier.insert_as_graph_into_db(self,self.test_data)
+
     def read_relationships_from_db(self,num_entries = None):
         sys.stdout.write("Initializing Relationship Graph\n")
 
         #Select as_relationships table
         querier = SQL_querier()
        	if(num_entries is not None):
-            querier.select_relationships(num_entries)
+            records = querier.select_relationships(num_entries)
         else:
             numLines = querier.count_entries('relationships')
-            querier.select_relationships()
+            records = querier.select_table('as_relationships')
 
         print("\tFilling Graph...")
 
@@ -52,18 +89,18 @@ class AS_Graph:
         else:
             progress = progress_bar(numLines)
         
-        for record in querier.cursor:
-            named_r = named_tup.Relationship(*record)
+        for record in records:
+           # named_r = named_tup.Relationship(*record)
             #If it's not a cone
-            if named_r.cone_as is None:
+            if record.cone_as is None:
                 #If it's peer-peer (no customer)
-                if(named_r.customer_as is None):
-                    self.add_relationship(named_r.peer_as_1,named_r.peer_as_2,1)
-                    self.add_relationship(named_r.peer_as_2,named_r.peer_as_1,1)
+                if(record.customer_as is None):
+                    self.add_relationship(record.peer_as_1,record.peer_as_2,1)
+                    self.add_relationship(record.peer_as_2,record.peer_as_1,1)
                 #if it's provider-consumer
-                if(named_r.provider_as is not None):
-                    self.add_relationship(named_r.customer_as[0],named_r.provider_as,0)
-                    self.add_relationship(named_r.provider_as,named_r.customer_as[0],2)
+                if(record.provider_as is not None):
+                    self.add_relationship(record.customer_as[0],record.provider_as,0)
+                    self.add_relationship(record.provider_as,record.customer_as[0],2)
             progress.update()
 
             if(num_entries is not None):
@@ -77,21 +114,31 @@ class AS_Graph:
 
         return
 
-    def read_seperate_relationships_from_db(self):
+    def read_seperate_relationships_from_db(self,peers_table_name = None,
+                                        customer_provider_table_name = None):
         print("Initializing Relationship Graph")
         querier = SQL_querier()
+        if(peers_table_name):
+            numLines = querier.count_entries(peers_table_name)
+            records = querier.select_table(peers_table_name)
+        else:
+            numLines = querier.count_entries('peers')
+            records = querier.select_table('peers')
+        for record in records:
+            self.add_relationship(record.peer_as_1,record.peer_as_2,1)
+            self.add_relationship(record.peer_as_2,record.peer_as_1,1)
 
-        numLines = querier.count_entries('customer_providers')
-        querier.select_customer_providers()
-        for record in querier.cursor:
-            self.add_relationship(record[1],record[2],0)
-            self.add_relationship(record[2],record[1],2)
-
-        numLines = querier.count_entries('peers')
-        querier.select_peers()
-        for record in querier.cursor:
-            self.add_relationship(record[1],record[2],1)
-            self.add_relationship(record[2],record[1],1)
+        if(customer_provider_table_name):
+            #TODO rename test_customer_providers table to match real table
+            numLines = querier.count_entries(customer_provider_table_name)
+            records = querier.select_table(customer_provider_table_name)
+        else:
+            numLines = querier.count_entries('customer_provider_pairs')
+            records = querier.select_table('customer_provider_pairs')
+        for record in records:
+            self.add_relationship(record.customer_as,record.provider_as,0)
+            self.add_relationship(record.provider_as,record.customer_as,2)
+        return
 
     def assign_ranks(self):
         self.find_strong_conn_components()
@@ -112,28 +159,26 @@ class AS_Graph:
         #TODO allow for announcements with known paths to be given to large components
         large_components = list()
         for component in self.strongly_connected_components:
-            if(len(component)>1):
-                large_components.append(component)
-        progress = progress_bar(len(large_components))
+            comp = self.strongly_connected_components[component]
+            if(len(comp)>1):
+                large_components.append(comp)
+        
+        progress = progress_bar(0,len(large_components))
+        for component in large_components: 
+            progress.next_job(len(component))
 
-        for component in large_components:
             #Create an AS using an "inner" AS to avoid collision
             #TODO maybe change it to some known unique value, ideally integer
             #grab ASN of first AS in component
-            new_asn = self.ases[component[0]].asn
+            new_asn = self.ases[component[0]].SCC_id
             combined_AS = AS(new_asn)
+            combined_AS.SCC_id = new_asn
             combined_cust_anns = list()
             combined_peer_prov_anns = list()
 
             #get providers, peers, customers from "inner" ASes
             #only if they aren't also in "inner" ASes
             for asn in component:
-
-                if(self.ases[asn].anns_from_customers):
-                    combined_cust_anns.extend(self.ases[asn].anns_from_customers)
-                if(self.ases[asn].anns_from_peers_providers):
-                    combined_peer_prov_anns.extend(self.ases[asn].anns_from_peers_providers)
-
                 for provider in self.ases[asn].providers:
                     if(provider not in component):
                         combined_AS.add_neighbor(provider, 0)
@@ -154,30 +199,10 @@ class AS_Graph:
                         cust_AS = self.ases[customer]
                         cust_AS.providers.remove(asn)
                         cust_AS.append_no_dup(cust_AS.providers,new_asn)
-                self.ases.pop(asn,None)
-
-            all_combined_anns = combined_cust_anns + combined_peer_prov_anns
-            num_anns = len(all_combined_anns)
-            duplicate_anns = list()
-            for i in range(num_anns):
-                for j in range(i+1,num_anns):
-                    if(all_combined_anns[i].prefix == all_combined_anns[j].prefix
-                        and all_combined_anns[i].origin == all_combined_anns[j].origin):
-                        if(all_combined_anns[i].as_path_length < all_combined_anns[j].as_path_length):
-                            duplicate_anns.append(all_combined_anns[i])
-                        else:
-                            duplicate_anns.append(all_combined_anns[j])
-            for dup in duplicate_anns:
-                if dup in combined_cust_anns:
-                    combined_cust_anns.remove(dup)
-                if dup in combined_peer_prov_anns:
-                    combined_peer_prov_anns.remove(dup)
-
-            combined_AS.anns_from_customers = combined_cust_anns
-            combined_AS.anns_from_peers_providers = combined_peer_prov_anns
+                self.ases[asn] = combined_AS
+                progress.update()
             self.ases[combined_AS.asn] = combined_AS
-            progress.update()
-        print()
+        progress.finish()
         return
 
     def find_strong_conn_components(self):
@@ -186,7 +211,7 @@ class AS_Graph:
         #index is node id in DFS from 
         index = 0
         stack = list()
-        components = list()
+        components = dict()
         
         print("\tFinding Strongly Connected Components")
         progress = progress_bar(len(self.ases))
@@ -198,7 +223,7 @@ class AS_Graph:
                 self.strong_connect(AS,index,stack,components)
             progress.update()
         self.strongly_connected_components = components
-        print()
+        progress.finish()
         return components
 
     def strong_connect(self,AS,index,stack,components):
@@ -206,7 +231,6 @@ class AS_Graph:
 
         iteration_stack = list()
         iteration_stack.append(AS)
-        SCC_id = 0
 
         while(iteration_stack):
             node = iteration_stack.pop()
@@ -231,6 +255,7 @@ class AS_Graph:
             #if recurse is true continue to top of "iteration_stack"
             if(recurse): continue
             if(node.lowlink == node.index):
+                SCC_id = node.asn
                 #DO pop node WHILE node != top
                 #stack until "node" is ASes in current component
                 component = list()
@@ -241,8 +266,7 @@ class AS_Graph:
                     component.append(top.asn)
                     if(node == top):
                         break
-                components.append(component)
-                SCC_id = SCC_id + 1
+                components[SCC_id] = component
             
             #if "dead end" was hit and it's not part of component
             if(iteration_stack):
