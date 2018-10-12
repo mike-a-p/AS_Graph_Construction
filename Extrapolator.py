@@ -18,33 +18,38 @@ from Recipient_List import Recipient_List
 from progress_bar import progress_bar
 
 class extrapolator:
-    def __init__(self, ann_table_name = None, graph_table_name = None, save_to_db = None,):
-        #extrapolator can be given a graph to use
-        self.ann_table_name = ann_table_name
-        self.save_to_db = save_to_db
-        #if test_data is anything but True, real data is used
-        self.graph = AS_Graph(graph_table_name)
-        self.ases_with_anns = list()
+    def __init__(self):
         self.querier = SQL_querier()
+        self.graph = AS_Graph()
+        self.ases_with_anns = list()
         return
 
-    def update_graph(self,peers_table_name = None, customer_provider_table_name = None,
-                        no_ranks = None):
-        #Graph is updated using one-to-one relationships stored in DB.
-        #Newly constructed graph is assigned ranks (which includes combining
-        #strongly connected components).
-        if(peers_table_name and customer_provider_table_name):
-            self.graph.read_seperate_relationships_from_db(peers_table_name,
-                                                customer_provider_table_name)
+    def set_ann_input_table(self,table_name): 
+        exists = self.querier.exists_table(table_name)
+        if(exists):
+            self.ann_input_table_name = table_name
         else:
-            self.graph.read_seperate_relationships_from_db()
-        if(not no_ranks):
-            self.graph.assign_ranks()
-        if(self.save_to_db):
-            self.graph.save_graph_to_db()
+            print("Table name \"" + table_name + "\" not found in database. Check config file.")
+            sys.exit()
+        return 
+
+    def set_results_table(self,table_name):
+        self.querier.set_results_table(table_name)
+        return
+    
+    def set_peers_table(self,table_name):
+        self.graph.set_peers_table(table_name)
+        return
+    
+    def set_customer_provider_table(self,table_name):
+        self.graph.set_customer_provider_table(table_name)
         return
         
-    def perform_propagation(self,num_announcements = None):
+    def set_graph_table(self,table_name):
+        self.graph.set_graph_table(table_name)
+        return
+
+    def perform_propagation(self,num_announcements = None,):
         """Performs announcement propagation and uploads results to database.
             :meth:`~insert_announcements()`\n 
             :meth:`~prop_anns_sent_to_peers_providers()`\n
@@ -61,8 +66,6 @@ class extrapolator:
         self.prop_anns_sent_to_peers_providers()
         self.propagate_up()
         self.propagate_down()
-        if(self.save_to_db):
-            self.save_anns_to_db()
         return
 
     def append_announcement(self, some_dict,key, announcement):
@@ -247,7 +250,7 @@ class extrapolator:
         
         """
         
-        print("Propagating Announcements From Customers")
+        print("Propagating Announcements From Customers...")
         graph = self.graph
         progress = progress_bar(len(self.graph.ases_by_rank))
         for level in range(len(self.graph.ases_by_rank)):
@@ -260,6 +263,27 @@ class extrapolator:
                 #send out best announcements
                 for ann in best_anns_from_customers:
                     self.prop_one_announcement(asn, ann, 1, None)
+            progress.update()
+        progress.finish()
+        return
+
+    def propagate_down(self):
+        """From "top" to "bottom"  send the best announcements at every AS to customers
+
+        """
+        print("Propagating Announcements To Customers...")
+        progress = progress_bar(len(self.graph.ases_by_rank))
+        for level in reversed(range(len(self.graph.ases_by_rank))):
+            for asn in self.graph.ases_by_rank[level]:
+                this_as = self.graph.ases[asn]
+                
+                best_anns_from_peers_providers = self.best_from_multiple_prefixes(this_as.anns_from_peers_providers)
+                #"non best" announcements from peers and providers are discarded
+                this_as.anns_from_peers_providers = best_anns_from_peers_providers
+                best_announcements = self.best_from_multiple_prefixes(this_as.anns_from_customers +
+                                                              this_as.anns_from_peers_providers)
+                for ann in best_announcements:
+                    self.prop_one_announcement(asn,ann,None, 1)
             progress.update()
         progress.finish()
         return
@@ -343,7 +367,7 @@ class extrapolator:
        
 
         """
-        print("\tPropagating Announcements Sent to Peers/Providers...")
+        print("Propagating Announcements Sent to Peers/Providers...")
         
         #For all ASes with announcements ( list made in give_anns_to_as_path() )
         for asn in self.ases_with_anns:
@@ -351,27 +375,6 @@ class extrapolator:
             for ann in self.graph.ases[asn].anns_sent_to_peers_providers:
                     self.prop_one_announcement(asn,ann,1, None)
             return
-
-    def propagate_down(self):
-        """From "top" to "bottom"  send the best announcements at every AS to customers
-
-        """
-        print("Propagating Announcements To Customers")
-        progress = progress_bar(len(self.graph.ases_by_rank))
-        for level in reversed(range(len(self.graph.ases_by_rank))):
-            for asn in self.graph.ases_by_rank[level]:
-                this_as = self.graph.ases[asn]
-                
-                best_anns_from_peers_providers = self.best_from_multiple_prefixes(this_as.anns_from_peers_providers)
-                #"non best" announcements from peers and providers are discarded
-                this_as.anns_from_peers_providers = best_anns_from_peers_providers
-                best_announcements = self.best_from_multiple_prefixes(this_as.anns_from_customers +
-                                                              this_as.anns_from_peers_providers)
-                for ann in best_announcements:
-                    self.prop_one_announcement(asn,ann,None, 1)
-            progress.update()
-        progress.finish()
-        return
 
     def insert_announcements(self,num_announcements = None):
         """Begins announcement propagation
@@ -381,12 +384,12 @@ class extrapolator:
       
         """
 
-        print("Inserting Announcements...")
+        print("\nInserting Announcements...")
 
         start_time = time.time()
 
-        if(self.ann_table_name):
-            records = self.querier.select_table(ann_table_name, num_announcements)
+        if(self.ann_input_table_name):
+            records = self.querier.select_table(self.ann_input_table_name, num_announcements)
         else:
             records = self.querier.select_table('elements', num_announcements)
 
@@ -395,10 +398,7 @@ class extrapolator:
         return
 
     def count_asn_conflicts(self):
-        if(self.ann_table_name):
-            records = self.querier.select_table(ann_table_name, num_announcements)
-        else:
-            records = self.querier.select_table('elements', num_announcements)
+        records = self.querier.select_table(self.ann_input_table_name, num_announcements)
         conflict_asns = dict()
         for ann in records:
             for asn in ann.as_path:
@@ -413,9 +413,9 @@ class extrapolator:
 
         for asn in self.graph.ases:
             AS = self.graph.ases[asn]
-            if asn == AS.SCC_id:
-                sql_anns_arg = AS.anns_to_sql()
-                self.querier.insert_to_as_announcements(asn,sql_anns_arg)
+        #    if asn == AS.SCC_id:
+            sql_anns_arg = AS.anns_to_sql()
+            self.querier.insert_results(asn,sql_anns_arg)
             progress.update()
         progress.finish()
         end_time = time.time()

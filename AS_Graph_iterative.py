@@ -4,23 +4,58 @@ import psutil
 import psycopg2
 import named_tup
 import time
-from progress_bar import progress_bar
 from collections import deque
+from datetime import datetime
+from progress_bar import progress_bar
 from AS import AS
 from SQL_querier import SQL_querier
 
 class AS_Graph:
 
-    def __init__(self, graph_table_name = None):
+    def __init__(self):
+        self.querier = SQL_querier()
         self.ases = dict()
         self.ases_with_anns = list()
         self.ases_by_rank = dict()
         self.strongly_connected_components = dict()
-        self.graph_table_name = graph_table_name
+        self.date_time = datetime.now()
+        
         return
 
     def __repr__(self):
         return str(self.ases)
+
+    #TODO possibly add user prompt if table name is wrong 
+    #TODO customize response (will say not found if lacking permissions).
+    #Or just allow database to throw it's error and give stacktrace
+
+    #ask to use default, change, or quit
+    def set_peers_table(self,table_name):
+        exists = self.querier.exists_table(table_name)
+        if(exists):
+            self.peers_table_name = table_name
+        else:
+            print("Table name \"" + table_name + "\" not found in database. Check config file.")
+            sys.exit()
+        return
+
+    def set_customer_provider_table(self,table_name):
+        exists = self.querier.exists_table(table_name)
+        if(exists):
+            self.customer_provider_table_name = table_name
+        else: 
+            print("Table name \"" + table_name + "\" not found in database. Check config file.")
+            sys.exit()
+        return
+
+    def set_graph_table(self,table_name):
+        exists = self.querier.exists_table(table_name)
+        if(exists):
+            self.graph_table_name = table_name
+        else: 
+            print("Table name \"" + table_name + "\" not found in database. Check config file.")
+            sys.exit()
+        return   
 
     def  add_relationship(self, asn,neighbor,relation):
         """Adds an AS relationship to the provided graph (dictionary)
@@ -34,15 +69,12 @@ class AS_Graph:
         return
 
     #TODO add param for graph date/version
-    def load_graph_from_db(self):
+    def load_pre_built(self):
         querier = SQL_querier()
-        if(self.graph_table_name):
-            numLines = querier.count_entries(self.graph_table_name)
-            records = querier.select_table(self.graph_table_name)
-        else:
-            numLines = querier.count_entries('as_graph')
-            records = querier.select_table('as_graph')
-        print("\tReading from as_graph table")
+        numLines = querier.count_entries(self.graph_table_name)
+        records = querier.select_table(self.graph_table_name)
+
+        print("\nReading from as_graph table")
         progress = progress_bar(numLines)
         for record in records:
             current_as = AS(record.asn)
@@ -64,77 +96,30 @@ class AS_Graph:
         progress.finish()
         return
 
-    def save_graph_to_db(self):
-        querier = SQL_querier()
-        querier.insert_as_graph_into_db(self,self.test_data)
-
-    def read_relationships_from_db(self,num_entries = None):
-        sys.stdout.write("Initializing Relationship Graph\n")
-
-        #Select as_relationships table
-        querier = SQL_querier()
-       	if(num_entries is not None):
-            records = querier.select_relationships(num_entries)
-        else:
-            numLines = querier.count_entries('relationships')
-            records = querier.select_table('as_relationships')
-
-        print("\tFilling Graph...")
-
-        #Progress bar setup 
-        start_time = time.time()
-        if(num_entries is not None):
-            i = 0
-            progress = progress_bar(num_entries)
-        else:
-            progress = progress_bar(numLines)
-        
-        for record in records:
-           # named_r = named_tup.Relationship(*record)
-            #If it's not a cone
-            if record.cone_as is None:
-                #If it's peer-peer (no customer)
-                if(record.customer_as is None):
-                    self.add_relationship(record.peer_as_1,record.peer_as_2,1)
-                    self.add_relationship(record.peer_as_2,record.peer_as_1,1)
-                #if it's provider-consumer
-                if(record.provider_as is not None):
-                    self.add_relationship(record.customer_as[0],record.provider_as,0)
-                    self.add_relationship(record.provider_as,record.customer_as[0],2)
-            progress.update()
-
-            if(num_entries is not None):
-                i = i + 1
-                if(i>num_entries):
-                    break
-
-        neighbor_time = time.time()
-        sys.stdout.write('\n')
-        #cursor.close()
-
+    def update(self):
+        #Graph is updated using one-to-one relationships stored in DB.
+        #Newly constructed graph is assigned ranks (which includes combining
+        #strongly connected components).
+        self.read_seperate_relationships_from_db()
+        self.assign_ranks()
         return
 
-    def read_seperate_relationships_from_db(self,peers_table_name = None,
-                                        customer_provider_table_name = None):
+    def save_graph_to_db(self):
+        querier = SQL_querier()
+        querier.insert_as_graph_into_db(self,self.graph_table_name)
+        return
+
+    def read_seperate_relationships_from_db(self):
         print("Initializing Relationship Graph")
         querier = SQL_querier()
-        if(peers_table_name):
-            numLines = querier.count_entries(peers_table_name)
-            records = querier.select_table(peers_table_name)
-        else:
-            numLines = querier.count_entries('peers')
-            records = querier.select_table('peers')
+        numLines = querier.count_entries(self.peers_table_name)
+        records = querier.select_table(self.peers_table_name)
         for record in records:
             self.add_relationship(record.peer_as_1,record.peer_as_2,1)
             self.add_relationship(record.peer_as_2,record.peer_as_1,1)
 
-        if(customer_provider_table_name):
-            #TODO rename test_customer_providers table to match real table
-            numLines = querier.count_entries(customer_provider_table_name)
-            records = querier.select_table(customer_provider_table_name)
-        else:
-            numLines = querier.count_entries('customer_provider_pairs')
-            records = querier.select_table('customer_provider_pairs')
+        numLines = querier.count_entries(self.customer_provider_table_name)
+        records = querier.select_table(self.customer_provider_table_name)
         for record in records:
             self.add_relationship(record.customer_as,record.provider_as,0)
             self.add_relationship(record.provider_as,record.customer_as,2)
@@ -155,8 +140,7 @@ class AS_Graph:
 
         """
 
-        print("\tCombining Components")
-        #TODO allow for announcements with known paths to be given to large components
+        print("\nCombining Components")
         large_components = list()
         for component in self.strongly_connected_components:
             comp = self.strongly_connected_components[component]
@@ -181,26 +165,29 @@ class AS_Graph:
             for asn in component:
                 for provider in self.ases[asn].providers:
                     if(provider not in component):
-                        combined_AS.add_neighbor(provider, 0)
+                        combined_AS.append_no_dup(combined_AS.providers,provider)
+              #          combined_AS.add_neighbor(provider,0)
                         #replace old customer reference from provider
-                        #TODO maybe make faster removal function since list is sorted
                         prov_AS = self.ases[provider]
                         prov_AS.customers.remove(asn)
                         prov_AS.append_no_dup(prov_AS.customers,new_asn)
                 for peer in self.ases[asn].peers:
-                    if(peer not in component):
-                        combined_AS.add_neighbor(peer, 1)
+                    if(peer not in component): 
+                        combined_AS.append_no_dup(combined_AS.peers,peer)
+               #         combined_AS.add_neighbor(peer,1)
                         peer_AS = self.ases[peer]
                         peer_AS.peers.remove(asn)
                         peer_AS.append_no_dup(peer_AS.peers,new_asn)
                 for customer in self.ases[asn].customers:
                     if(customer not in component):
-                        combined_AS.add_neighbor(customer,2)
+                        combined_AS.append_no_dup(combined_AS.customers,customer)
+                #        combined_AS.add_neighbor(customer,2)
                         cust_AS = self.ases[customer]
                         cust_AS.providers.remove(asn)
                         cust_AS.append_no_dup(cust_AS.providers,new_asn)
                 self.ases[asn] = combined_AS
                 progress.update()
+
             self.ases[combined_AS.asn] = combined_AS
         progress.finish()
         return
@@ -213,7 +200,7 @@ class AS_Graph:
         stack = list()
         components = dict()
         
-        print("\tFinding Strongly Connected Components")
+        print("\nFinding Strongly Connected Components")
         progress = progress_bar(len(self.ases))
         
         for asn in self.ases:
