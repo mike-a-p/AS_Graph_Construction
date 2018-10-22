@@ -4,6 +4,9 @@ import re
 from datetime import date
 from lib_bgp_data import Database
 from progress_bar import progress_bar
+from named_tup import What_if_tup
+import random
+import sys
 #imports should be modified with file rearrangement
 
 class SQL_querier:
@@ -32,11 +35,11 @@ class SQL_querier:
             print("Selecting \"" + table_name + "\" Records...")
         return self.database.execute(sql,data)
 
-    def select_row(self,table_name,asn = None, customer_as = None ,provider_as = None):
+    def select_row(self,table_name,primary_key_name = None,primary_key = None, customer_as = None ,provider_as = None):
         #Finds the row that contains the customer-provider
         #relationship between two ASes
         if(asn):
-            sql = "SELECT * FROM " + table_name + " WHERE asn = (%s);"
+            sql = "SELECT * FROM " + table_name + " WHERE "+ primary_key_name +" = (%s);"
             data = (asn,)
         else:
             sql = "SELECT * FROM " + table_name + " WHERE customer_as = (%s) AND provider_as = (%s);"
@@ -44,9 +47,8 @@ class SQL_querier:
         record = self.database.execute(sql,data)
         return record
 
-    #TODO rename this function, it's mainly for customer_provider relationships
-    def exists_row(self,table_name,asn = None, customer_as = None, provider_as = None):
-        record = self.select_row(table_name,asn,customer_as, provider_as)
+    def exists_edge(self,table_name,customer_as = None, provider_as = None):
+        record = self.select_row(table_name,None,None,customer_as, provider_as)
         if(record):
             exists = True
         else:
@@ -71,24 +73,16 @@ class SQL_querier:
 
         """
         sql = "SELECT COUNT(*) FROM " + table_name + ";"
-        numLines = self.database.execute(sql)
+        count = self.database.execute(sql)
 
         print("\nCounting \"" + table_name + "\" Entries...")
 
-        #Database class calls fetchall() which returns count in strange format
-        numLines = self.fetch_all_to_int(numLines)
+        numLines = count[0].count
         print("\t" + str(numLines) + " Entries")
         return numLines
 
-    def fetch_all_to_int(self,fetch_all):
-        numLines = str(fetch_all[0])
-        p = re.compile(r'Record\(count=(\d+)\)') 
-        m = p.match(numLines)
-        numLines = int(m.group(1))        
-        return numLines
-
     def insert_results(self,asn, sql_anns):
-        if(self.exists_row(table_name = self.results_table_name,asn = asn)):
+        if(self.exists_row(table_name = self.results_table_name,primary_key_name = 'asn',primary_key = asn)):
             sql = ("""UPDATE """ + self.results_table_name + """ SET announcements = announcements||((%s)::announcement[])
                     WHERE asn = (%s);""")
             data = (sql_anns,asn)
@@ -117,4 +111,35 @@ class SQL_querier:
             progress.update()
         progress.finish()
         return
+
+    def insert_random_what_ifs(self):
+        sql = "INSERT INTO api.whatif VALUES ((%s),(%s),(%s),(%s))"
+        progress = progress_bar(50000)   
+        used_asns = dict() 
+
+        for i in range(50000):
+            unique_asn = False
+            while(not unique_asn):
+                asn = random.randint(1,300000)
+                if(asn not in used_asns):
+                    used_asns[asn] = True
+                    unique_asn = True
+
+            policy_1 = What_if_tup(random.uniform(0,1),random.uniform(0,1))
+            policy_2 = What_if_tup(random.uniform(0,1),random.uniform(0,1))
+            policy_3 = What_if_tup(random.uniform(0,1),random.uniform(0,1))
+            data = (asn,policy_1,policy_2,policy_3)
+            self.database.execute(sql,data)
+            progress.update()
+        progress.finish()
+
+    def insert_ann_occurances(self,prefix_origin_hash,occurances):
+        if(self.exists_row(table_name = 'ann_occurances',primary_key_name = 'prefix_origin_hash',
+                            primary_key = prefix_origin_hash)):
+            sql = "UPDATE ann_occurances SET occurances = occurances ||(%s) WHERE prefix_origin_hash = (%s)"
+            data = ([occurances,],prefix_origin_hash)
+        else:
+            sql = "INSERT INTO ann_occurances VALUES ((%s),(%s))"
+            data = (prefix_origin_hash,[occurances,])
+        self.database.execute(sql,data)
 
