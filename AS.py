@@ -24,9 +24,10 @@ class AS:
             self.graph_id = graph_id
         self.asn = asn
         self.rank = None
-        self.anns_from_customers = list()
-        self.anns_from_peers_providers = list()
-        self.anns_sent_to_peers_providers = list()
+        self.anns_from_self = dict()
+        self.anns_from_customers = dict()
+        self.anns_from_peers_providers = dict()
+        self.anns_sent_to_peers_providers = dict()
         #variables for Tarjan's Alg
         self.index = None
         self.lowlink = None
@@ -83,32 +84,57 @@ class AS:
         else:
             return False
 
-    def all_announcements(self):
-        """Returns concatonation of all announcements this AS currently has.
-
-        Returns:
-            (:obj:`list` of :obj:`Announcement`): anns_from_customers + 
-                anns_from_peers_providers
-
-        """
-
-        return (self.anns_from_customers +
-            self.anns_from_peers_providers)
-
     def give_announcement(self,announcement):
-        """Appends announcement to appropriate list (from customer or 
+        """Appends announcement to appropriate dictionary (from customer or 
             peer/provider).
     
         Args:
             announcement (:obj:`Announcement`): Announcement to append.
         """
-
-        if(announcement.received_from == 0 or 
+        prefix_origin = announcement.prefix + str(announcement.origin)
+        #If announcement originated from this AS, add to anns_from_self
+        if(announcement.received_from is None):
+            if(prefix_origin in self.anns_from_self):
+                return
+            else:
+                self.anns_from_self[prefix_origin] = announcement
+        #If announcement came from peer_or_provider
+        elif(announcement.received_from == 0 or 
             announcement.received_from == 1):
-            self.anns_from_peers_providers.append(announcement)
+            #If this has come from a customer, don't accept this version
+            if(prefix_origin in self.anns_from_customers):
+                return
+            #If this has come from a provider, make sure this path is shorter
+            elif(prefix_origin in self.anns_from_peers_providers):
+                if(announcement.as_path_length < self.anns_from_peers_providers[prefix_origin].as_path_length):
+                    self.anns_from_peers_providers[prefix_origin] = announcement
+            #If it's the first time seeing it, just accept it
+            else:
+                self.anns_from_peers_providers[prefix_origin] = announcement
+        # Else, announcement came from customer
         else:
-            self.anns_from_customers.append(announcement)
+            #If this has come from a provider, remove old version, accept new
+            if(prefix_origin in self.anns_from_peers_providers):
+                self.anns_from_peers_providers.pop(prefix_origin,None)
+                self.anns_from_customers[prefix_origin] = announcement
+            #If this has come from a customer, make sure this path is shorter
+            elif(prefix_origin in self.anns_from_customers):
+                if(announcement.as_path_length < self.anns_from_customers[prefix_origin].as_path_length):
+                    self.anns_from_customers[prefix_origin] = announcement
+            #if it's the first time seeing it, just accept it
+            else:
+                self.anns_from_customers[prefix_origin] = announcement
         return
+
+    def sent_to_peer_or_provider(self,announcement):
+        self.anns_sent_to_peers_providers[announcement.prefix + str(announcement.origin)] = announcement
+    
+    def already_received(self,ann):
+        if ((ann.prefix + str(ann.origin)) in self.anns_from_peers_providers or
+            (ann.prefix + str(ann.origin)) in self.anns_from_customers):
+            return True
+        else:
+            return False
 
     def anns_to_sql(self):
         """Converts all announcements received by this AS to a list of
@@ -120,12 +146,31 @@ class AS:
 
 
         """
-        #combine all announcements
-        announcements = self.anns_from_customers + self.anns_from_peers_providers
         data = list()
         psycopg2.extras.register_uuid()
 
-        for ann in announcements:
+        #TODO iterate through all announcements between two dictionaries
+        #without repeating code
+        for ann in self.anns_from_customers:
+            ann = self.anns_from_customers[ann]
+            
+            #path_len an rec_from are given 3 digits each
+            #padding ensures e.g. '33' + '0' is not mistaken for '3' + '30"
+            path_len = str(ann.as_path_length).zfill(3)
+            if(ann.received_from is None):
+               rec_from = str(3).zfill(3) 
+            else:
+               rec_from = str(ann.received_from).zfill(3)
+            # '-' serves similar purpose to padding, seperating parts
+            po = (str(ann.prefix) + '-' + str(ann.origin))
+            po = uuid.uuid3(uuid.NAMESPACE_DNS,po)
+            path_len_rec_from = int(path_len + rec_from)
+            #Named Tuples are adaptable to Postgres composite types
+            ann_tup = Announcement_tup(*(po,path_len_rec_from))
+            data.append(ann_tup)
+        for ann in self.anns_from_peers_providers:
+            ann = self.anns_from_peers_providers[ann]
+            
             #path_len an rec_from are given 3 digits each
             #padding ensures e.g. '33' + '0' is not mistaken for '3' + '30"
             path_len = str(ann.as_path_length).zfill(3)

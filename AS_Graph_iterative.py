@@ -285,8 +285,8 @@ class AS_Graph:
                         
                         for prov_cust in prov_AS.customers:
                             prov_cust_AS = self.ases[prov_cust]
-                            if (prov_cust_AS.rank is None and
-                                prov_cust_AS.SCC_id != prov_AS.SCC_id):
+                            if ((prov_cust_AS.rank is None and
+                                prov_cust_AS.SCC_id != prov_AS.SCC_id) or prov_cust_AS.rank > i ):
                                 skip_provider = 1
                                 break
                         if(skip_provider):
