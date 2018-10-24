@@ -26,8 +26,10 @@ class AS:
         self.rank = None
         self.anns_from_self = dict()
         self.anns_from_customers = dict()
-        self.anns_from_peers_providers = dict()
+        self.anns_from_providers = dict()
+        self.anns_from_peers = dict()
         self.anns_sent_to_peers_providers = dict()
+        self.seen_anns = dict()
         #variables for Tarjan's Alg
         self.index = None
         self.lowlink = None
@@ -91,6 +93,9 @@ class AS:
         Args:
             announcement (:obj:`Announcement`): Announcement to append.
         """
+        #There are 1-5 constant time hash table operations 
+        #in one call of this function.
+
         prefix_origin = announcement.prefix + str(announcement.origin)
         #If announcement originated from this AS, add to anns_from_self
         if(announcement.received_from is None):
@@ -98,40 +103,74 @@ class AS:
                 return
             else:
                 self.anns_from_self[prefix_origin] = announcement
-        #If announcement came from peer_or_provider
-        elif(announcement.received_from == 0 or 
-            announcement.received_from == 1):
-            #If this has come from a customer, don't accept this version
-            if(prefix_origin in self.anns_from_customers):
-                return
-            #If this has come from a provider, make sure this path is shorter
-            elif(prefix_origin in self.anns_from_peers_providers):
-                if(announcement.as_path_length < self.anns_from_peers_providers[prefix_origin].as_path_length):
-                    self.anns_from_peers_providers[prefix_origin] = announcement
-            #If it's the first time seeing it, just accept it
-            else:
-                self.anns_from_peers_providers[prefix_origin] = announcement
+
         # Else, announcement came from customer
-        else:
-            #If this has come from a provider, remove old version, accept new
-            if(prefix_origin in self.anns_from_peers_providers):
-                self.anns_from_peers_providers.pop(prefix_origin,None)
-                self.anns_from_customers[prefix_origin] = announcement
-            #If this has come from a customer, make sure this path is shorter
-            elif(prefix_origin in self.anns_from_customers):
+        elif(announcement.received_from == 2):
+            if(prefix_origin in self.anns_from_customers):
                 if(announcement.as_path_length < self.anns_from_customers[prefix_origin].as_path_length):
                     self.anns_from_customers[prefix_origin] = announcement
-            #if it's the first time seeing it, just accept it
-            else:
+            elif(prefix_origin in self.anns_from_peers):
+                self.anns_from_peers.pop(prefix_origin,None)
                 self.anns_from_customers[prefix_origin] = announcement
-        return
+            #If this has come from a provider, remove old version, accept new
+            elif(prefix_origin in self.anns_from_providers):
+                self.anns_from_providers.pop(prefix_origin,None)
+                self.anns_from_customers[prefix_origin] = announcement
+            #If this is a self made announcement don't take new one.
+            elif(prefix_origin in self.anns_from_self):
+                return
+            #if it's the first time seeing it, accept it
+            else:
+                self.seen_anns[prefix_origin] = True
+                self.anns_from_customers[prefix_origin] = announcement
+
+        #If announcement came from peer
+        elif(announcement.received_from == 1):
+            #If this has come from a better source, don't accept this version
+            if(prefix_origin in self.anns_from_customers):
+                return
+            if(prefix_origin in self.anns_from_self):
+                return
+            #If this has come from a peer, make sure this is shorter
+            elif(prefix_origin in self.anns_from_peers):
+                if(announcement.as_path_length < self.anns_from_peers[prefix_origin].as_path_length):
+                    self.anns_from_peers[prefix_origin] = announcement
+            #If this has come from a provider, remove that and accept new version
+            elif(prefix_origin in self.anns_from_providers):
+                self.anns_from_providers.pop(prefix_origin, None)
+                self.anns_from_peers[prefix_origin] = announcement
+            #If it's the first time seeing it, accept it
+            else:
+                self.seen_anns[prefix_origin] = True
+                self.anns_from_peers[prefix_origin] = announcement
+
+        #If announcement came from provider
+        else:
+            #If it's the first time seeing it, accept it
+            if(prefix_origin not in self.seen_anns):
+                self.seen_anns[prefix_origin] = True
+                self.anns_from_providers[prefix_origin] = announcement
+
+            #If this has come from another provider, compare
+            #This ".get" removes 1 extra hash value retrieval 
+            old_ann_from_provider = self.anns_from_providers.get(prefix_origin, None)
+            if old_ann_from_provider is not None:
+                if(announcement.as_path_length < old_ann_from_provider.as_path_length):
+                    self.anns_from_providers[prefix_origin] = announcement
+            #If this has come from a better source, ignore
+            else:
+                return
+
+    def process_announcements(self):
+        
 
     def sent_to_peer_or_provider(self,announcement):
         self.anns_sent_to_peers_providers[announcement.prefix + str(announcement.origin)] = announcement
     
     def already_received(self,ann):
-        if ((ann.prefix + str(ann.origin)) in self.anns_from_peers_providers or
-            (ann.prefix + str(ann.origin)) in self.anns_from_customers):
+        if((ann.prefix + str(ann.origin)) in self.anns_from_providers or
+              (ann.prefix + str(ann.origin)) in self.anns_from_peers or
+              (ann.prefix + str(ann.origin)) in self.anns_from_customers):
             return True
         else:
             return False

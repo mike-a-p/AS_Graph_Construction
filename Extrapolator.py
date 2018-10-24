@@ -70,9 +70,11 @@ class extrapolator:
         self.insert_announcements(num_announcements)
         self.prop_anns_sent_to_peers_providers()
         self.propagate_up()
+        start_down = time.time()
         self.propagate_down()
         end_time = time.time()
-        print("Time To Propagate: " + str(end_time - start_time) + "s")
+        print("Time To Propagate Down: " + str(end_time - start_down) + "s")
+        print("Total Time To Propagate: " + str(end_time - start_time) + "s")
         return
    
     def prop_one_announcement(self, asn,ann,to_peer_provider = None, 
@@ -89,7 +91,7 @@ class extrapolator:
 
         """
         source_as = self.graph.ases[asn]
-        new_path_length = asnn.as_path_length + 1
+        new_path_length = ann.as_path_length + 1
         #Integer arguments 2/1/0 are for "received from" customer/peer/provider
         if(to_peer_provider):
             for provider in source_as.providers:
@@ -148,9 +150,13 @@ class extrapolator:
                 for ann in cust_anns:
                     ann = cust_anns[ann]
                     self.prop_one_announcement(asn,ann,None, 1)
-                peer_prov_anns = graph.ases[asn].anns_from_peers_providers
-                for ann in peer_prov_anns:
-                    ann = peer_prov_anns[ann]
+                peer_anns = graph.ases[asn].anns_from_peers
+                for ann in peer_anns:
+                    ann = peer_anns[ann]
+                    self.prop_one_announcement(asn,ann,None, 1)
+                prov_anns = graph.ases[asn].anns_from_providers
+                for ann in prov_anns:
+                    ann = prov_anns[ann]
                     self.prop_one_announcement(asn,ann,None, 1)
                 anns_from_self = graph.ases[asn].anns_from_self
                 for ann in anns_from_self:
