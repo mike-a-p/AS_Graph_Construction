@@ -124,6 +124,10 @@ class extrapolator:
             anns_to_peers = list()
             for ann in source_as.all_anns:
                 ann = source_as.all_anns[ann]
+                #Peers/providers should not be send anns that came from peers/providers
+                if(ann.priority < 2):
+                    continue
+
                 new_path_length = ann.as_path_length + 1
                 path_length_weighted = 1 - new_path_length/100
                 

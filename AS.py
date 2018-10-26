@@ -110,11 +110,13 @@ class AS:
     def process_announcements(self):
         for prefix in self.incoming_announcements:
             anns = self.incoming_announcements[prefix]
-            best = anns[0]
+            best_new = anns[0]
             for ann in anns:
-                if ann.priority > best.priority:
-                    best = ann
-            self.all_anns[prefix] = best
+                if ann.priority > best_new.priority:
+                    best_new = ann
+            best_old = self.all_anns.get(prefix,None)
+            if(best_old is None or best_new.priority > best_old.priority):
+                self.all_anns[prefix] = best_new
 
     def sent_to_peer_or_provider(self,announcement):
         self.anns_sent_to_peers_providers[announcement.prefix + str(announcement.origin)] = announcement
