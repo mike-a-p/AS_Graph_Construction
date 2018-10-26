@@ -16,6 +16,7 @@ from AS import AS
 from Announcement import Announcement
 from Recipient_List import Recipient_List
 from progress_bar import progress_bar
+from collections import deque
 
 class extrapolator:
     def __init__(self):
@@ -94,26 +95,66 @@ class extrapolator:
         new_path_length = ann.as_path_length + 1
         #Integer arguments 2/1/0 are for "received from" customer/peer/provider
         if(to_peer_provider):
+            prov_priority = 2 + new_path_length/100
             for provider in source_as.providers:
                 updated_path = ann.as_path
                 updated_path.append(provider)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, new_path_length, updated_path)
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, prov_priority,new_path_length, updated_path)
                 self.graph.ases[provider].give_announcement(this_ann) 
-
+            peer_priority = 1 + new_path_length/100
             for peer in source_as.peers:
                 updated_path = ann.as_path
                 updated_path.append(peer)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1, None, new_path_length, updated_path)
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1, None, peer_priority, new_path_length, updated_path)
                 self.graph.ases[peer].give_announcement(this_ann)
 
         if(to_customer):
+            cust_priority = new_path_length/100
             for customer in source_as.customers:
                 updated_path = ann.as_path
                 updated_path.append(customer)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0, None, new_path_length, updated_path)
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0, None, cust_priority,new_path_length, updated_path)
                 self.graph.ases[customer].give_announcement(this_ann)
         return
-                       
+
+    def send_all_announcements(self,asn,to_peers_providers = None, to_customers = None):
+        source_as = self.graph.ases[asn]
+        if(to_peers_providers):
+            anns_to_providers = list()
+            anns_to_peers = list()
+            for ann in source_as.all_anns:
+                ann = source_as.all_anns[ann]
+                new_path_length = ann.as_path_length + 1
+                path_length_weighted = 1 - new_path_length/100
+                
+                prov_priority = 2 + path_length_weighted
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, prov_priority,new_path_length, ann.as_path)
+                anns_to_providers.append(this_ann)
+                
+                peer_priority = 1 + path_length_weighted
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1 , None, peer_priority,new_path_length, ann.as_path)
+                anns_to_peers.append(this_ann)
+
+            for provider in source_as.providers:
+                self.graph.ases[provider].receive_announcements(anns_to_providers)
+            for peer in source_as.peers:
+                self.graph.ases[peer].receive_announcements(anns_to_peers)
+
+        if(to_customers):
+            anns_to_customers = list()
+            for ann in source_as.all_anns: 
+                ann = source_as.all_anns[ann]
+                new_path_length = ann.as_path_length + 1
+                path_length_weighted = 1 - new_path_length/100
+
+                cust_priority = 0 + path_length_weighted 
+                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0 , None, cust_priority,new_path_length, ann.as_path)
+                anns_to_customers.append(this_ann)
+            for customer in source_as.customers:
+                self.graph.ases[customer].receive_announcements(anns_to_customers)
+
+        return
+
     def propagate_up(self):
         """Propagate announcements that came from customers to peers and providers
         
@@ -124,15 +165,10 @@ class extrapolator:
         progress = progress_bar(len(graph.ases_by_rank))
         for level in range(len(graph.ases_by_rank)):
             for asn in graph.ases_by_rank[level]:
-                cust_anns = graph.ases[asn].anns_from_customers
-                anns_from_self = graph.ases[asn].anns_from_self
-                #send out best announcements
-                for ann in cust_anns:
-                    ann = cust_anns[ann]
-                    self.prop_one_announcement(asn, ann, 1, None)
-                for ann in anns_from_self:
-                    ann = anns_from_self[ann]
-                    self.prop_one_announcement(asn, ann, 1, None)
+                graph.ases[asn].process_announcements()
+                if(graph.ases[asn].all_anns):
+                    self.send_all_announcements(asn, to_peers_providers = True, 
+                                               to_customers = False)
             progress.update()
         progress.finish()
         return
@@ -146,22 +182,10 @@ class extrapolator:
         progress = progress_bar(len(graph.ases_by_rank))
         for level in reversed(range(len(graph.ases_by_rank))):
             for asn in graph.ases_by_rank[level]:
-                cust_anns = graph.ases[asn].anns_from_customers
-                for ann in cust_anns:
-                    ann = cust_anns[ann]
-                    self.prop_one_announcement(asn,ann,None, 1)
-                peer_anns = graph.ases[asn].anns_from_peers
-                for ann in peer_anns:
-                    ann = peer_anns[ann]
-                    self.prop_one_announcement(asn,ann,None, 1)
-                prov_anns = graph.ases[asn].anns_from_providers
-                for ann in prov_anns:
-                    ann = prov_anns[ann]
-                    self.prop_one_announcement(asn,ann,None, 1)
-                anns_from_self = graph.ases[asn].anns_from_self
-                for ann in anns_from_self:
-                    ann = anns_from_self[ann]
-                    self.prop_one_announcement(asn,ann,None, 1)
+                graph.ases[asn].process_announcements()
+                if(graph.ases[asn].all_anns):
+                    self.send_all_announcements(asn, to_peers_providers = False,
+                                                to_customers = True)
             progress.update()
         progress.finish()
         return
@@ -177,7 +201,7 @@ class extrapolator:
             hop(:obj:`str`):An IP address used to record the next system to hop to.
 
         """
-     
+         
         #avoids error for anomaly announcement
         if(as_path is None):
                 return
@@ -188,7 +212,7 @@ class extrapolator:
         ann_to_check_for = Announcement(prefix,rev_path[0],hop,None,None,None,None)
 
         #i used to traverse as_path
-        i = -1       
+        i = 0 
         for asn in rev_path: 
             i = i + 1
             if(asn not in self.graph.ases):
@@ -220,7 +244,8 @@ class extrapolator:
 	    #Used to identify when ASes in path aren't neighbors
             broken_path = False
             #assign 'received_from' if AS isn't first in as_path
-            if(i > 0):
+            received_from = 3
+            if(i > 1):
                 if(rev_path[i-1] in self.graph.ases[comp_id].providers):
                     received_from = 0
                 elif(rev_path[i-1] in self.graph.ases[comp_id].peers):
@@ -228,20 +253,22 @@ class extrapolator:
                 elif(rev_path[i-1] in self.graph.ases[comp_id].customers):
                     received_from = 2
                 elif(rev_path[i-1] == asn):
-                    received_from = None
+                    received_from = 3
                 else:
                     broken_path = True
                     
-            else: received_from = None
+            this_path_len = i-1
+            path_length_weighted = 1 - this_path_len/100
 
-            this_path_len = i + 1
+            priority = received_from + path_length_weighted
             if(not broken_path):
-                announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,this_path_len,as_path[-this_path_len:])
-                #append new announcement to ann_dict
-                self.graph.ases[asn].give_announcement(announcement)
-                #TODO check if this 'if' ammendment works
+                left_appendable_path = deque(as_path[-this_path_len:])
+                announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,priority,this_path_len,left_appendable_path)
                 if(sent_to == 1 or sent_to == 0):
                     self.graph.ases[asn].sent_to_peer_or_provider(announcement)
+                
+                announcement = [announcement,]
+                self.graph.ases[asn].receive_announcements(announcement)
                 #ases_with_anns
                 self.ases_with_anns.append(comp_id)
 

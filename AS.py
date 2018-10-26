@@ -1,6 +1,7 @@
 import uuid
 import psycopg2
 from named_tup import Announcement_tup
+from Announcement import Announcement
 
 class AS:
     def __init__(self,asn,
@@ -29,7 +30,9 @@ class AS:
         self.anns_from_providers = dict()
         self.anns_from_peers = dict()
         self.anns_sent_to_peers_providers = dict()
+        self.all_anns = dict()
         self.seen_anns = dict()
+        self.incoming_announcements = dict()
         #variables for Tarjan's Alg
         self.index = None
         self.lowlink = None
@@ -86,83 +89,32 @@ class AS:
         else:
             return False
 
-    def give_announcement(self,announcement):
+    #TODO rename plural
+    def receive_announcements(self,announcements):
         """Appends announcement to appropriate dictionary (from customer or 
             peer/provider).
     
         Args:
             announcement (:obj:`Announcement`): Announcement to append.
         """
-        #There are 1-5 constant time hash table operations 
-        #in one call of this function.
-
-        prefix_origin = announcement.prefix + str(announcement.origin)
-        #If announcement originated from this AS, add to anns_from_self
-        if(announcement.received_from is None):
-            if(prefix_origin in self.anns_from_self):
-                return
-            else:
-                self.anns_from_self[prefix_origin] = announcement
-
-        # Else, announcement came from customer
-        elif(announcement.received_from == 2):
-            if(prefix_origin in self.anns_from_customers):
-                if(announcement.as_path_length < self.anns_from_customers[prefix_origin].as_path_length):
-                    self.anns_from_customers[prefix_origin] = announcement
-            elif(prefix_origin in self.anns_from_peers):
-                self.anns_from_peers.pop(prefix_origin,None)
-                self.anns_from_customers[prefix_origin] = announcement
-            #If this has come from a provider, remove old version, accept new
-            elif(prefix_origin in self.anns_from_providers):
-                self.anns_from_providers.pop(prefix_origin,None)
-                self.anns_from_customers[prefix_origin] = announcement
-            #If this is a self made announcement don't take new one.
-            elif(prefix_origin in self.anns_from_self):
-                return
-            #if it's the first time seeing it, accept it
-            else:
-                self.seen_anns[prefix_origin] = True
-                self.anns_from_customers[prefix_origin] = announcement
-
-        #If announcement came from peer
-        elif(announcement.received_from == 1):
-            #If this has come from a better source, don't accept this version
-            if(prefix_origin in self.anns_from_customers):
-                return
-            if(prefix_origin in self.anns_from_self):
-                return
-            #If this has come from a peer, make sure this is shorter
-            elif(prefix_origin in self.anns_from_peers):
-                if(announcement.as_path_length < self.anns_from_peers[prefix_origin].as_path_length):
-                    self.anns_from_peers[prefix_origin] = announcement
-            #If this has come from a provider, remove that and accept new version
-            elif(prefix_origin in self.anns_from_providers):
-                self.anns_from_providers.pop(prefix_origin, None)
-                self.anns_from_peers[prefix_origin] = announcement
-            #If it's the first time seeing it, accept it
-            else:
-                self.seen_anns[prefix_origin] = True
-                self.anns_from_peers[prefix_origin] = announcement
-
-        #If announcement came from provider
-        else:
-            #If it's the first time seeing it, accept it
-            if(prefix_origin not in self.seen_anns):
-                self.seen_anns[prefix_origin] = True
-                self.anns_from_providers[prefix_origin] = announcement
-
-            #If this has come from another provider, compare
-            #This ".get" removes 1 extra hash value retrieval 
-            old_ann_from_provider = self.anns_from_providers.get(prefix_origin, None)
-            if old_ann_from_provider is not None:
-                if(announcement.as_path_length < old_ann_from_provider.as_path_length):
-                    self.anns_from_providers[prefix_origin] = announcement
-            #If this has come from a better source, ignore
-            else:
-                return
-
+        for ann in announcements:
+            if(ann.prefix not in self.incoming_announcements):
+                self.incoming_announcements[ann.prefix] = list()
+#            ann_copy = Announcement(ann.prefix, ann.origin, ann.next_as, ann.received_from,
+#                                    None,ann.priority,ann.as_path_length, ann.as_path.copy())
+#            ann_copy.as_path.appendleft(self.asn)
+#            ann_copy.as_path_length = ann_copy.as_path_length + 1
+            self.incoming_announcements[ann.prefix].append(ann)
+        return
+            
     def process_announcements(self):
-        
+        for prefix in self.incoming_announcements:
+            anns = self.incoming_announcements[prefix]
+            best = anns[0]
+            for ann in anns:
+                if ann.priority > best.priority:
+                    best = ann
+            self.all_anns[prefix] = best
 
     def sent_to_peer_or_provider(self,announcement):
         self.anns_sent_to_peers_providers[announcement.prefix + str(announcement.origin)] = announcement
