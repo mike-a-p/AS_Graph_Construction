@@ -25,19 +25,17 @@ class AS:
             self.graph_id = graph_id
         self.asn = asn
         self.rank = None
-        self.anns_from_self = dict()
-        self.anns_from_customers = dict()
-        self.anns_from_providers = dict()
-        self.anns_from_peers = dict()
         self.anns_sent_to_peers_providers = dict()
         self.all_anns = dict()
         self.seen_anns = dict()
         self.incoming_announcements = dict()
+
         #variables for Tarjan's Alg
         self.index = None
         self.lowlink = None
         self.onstack = False
         self.SCC_id = None
+
         #component validation
         self.visited = False
     
@@ -100,10 +98,6 @@ class AS:
         for ann in announcements:
             if(ann.prefix not in self.incoming_announcements):
                 self.incoming_announcements[ann.prefix] = list()
-#            ann_copy = Announcement(ann.prefix, ann.origin, ann.next_as, ann.received_from,
-#                                    None,ann.priority,ann.as_path_length, ann.as_path.copy())
-#            ann_copy.as_path.appendleft(self.asn)
-#            ann_copy.as_path_length = ann_copy.as_path_length + 1
             self.incoming_announcements[ann.prefix].append(ann)
         return
             
@@ -118,13 +112,19 @@ class AS:
             if(best_old is None or best_new.priority > best_old.priority):
                 self.all_anns[prefix] = best_new
 
+    def clear_announcements(self):
+        #re-references all announcement collections to new dictionaries
+        self.all_anns = dict()
+        self.seen_anns = dict()
+        self.incoming_announcements = dict()
+        self.anns_sent_to_peers_providers = dict() 
+        return
+
     def sent_to_peer_or_provider(self,announcement):
         self.anns_sent_to_peers_providers[announcement.prefix + str(announcement.origin)] = announcement
     
     def already_received(self,ann):
-        if((ann.prefix + str(ann.origin)) in self.anns_from_providers or
-              (ann.prefix + str(ann.origin)) in self.anns_from_peers or
-              (ann.prefix + str(ann.origin)) in self.anns_from_customers):
+        if(ann.prefix in self.all_anns):
             return True
         else:
             return False
@@ -144,8 +144,8 @@ class AS:
 
         #TODO iterate through all announcements between two dictionaries
         #without repeating code
-        for ann in self.anns_from_customers:
-            ann = self.anns_from_customers[ann]
+        for ann in self.all_anns:
+            ann = self.all_anns[ann]
             
             #path_len an rec_from are given 3 digits each
             #padding ensures e.g. '33' + '0' is not mistaken for '3' + '30"

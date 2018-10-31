@@ -10,8 +10,11 @@ import sys
 #imports should be modified with file rearrangement
 
 class SQL_querier:
-    def __init__(self):
-        self.database = Database(cursor_factory=psycopg2.extras.NamedTupleCursor)
+    def __init__(self,cursor_type = None):
+        if(cursor_type is not None and cursor_type.lower() == 'dict'): 
+            self.database = Database(cursor_factory=psycopg2.extras.DictCursor)
+        else:
+            self.database = Database(cursor_factory=psycopg2.extras.NamedTupleCursor)
         self.today = date.today()
         return
 
@@ -34,6 +37,12 @@ class SQL_querier:
             sql = "SELECT * FROM " + table_name +";"
             print("Selecting \"" + table_name + "\" Records...")
         return self.database.execute(sql,data)
+
+    def select_anns_by_prefix(self, table_name, prefix):
+        sql = "SELECT * FROM " + table_name + " WHERE prefix = (%s);"
+        data = (prefix,)
+        anns_for_prefix = self.database.execute(sql,data)
+        return anns_for_prefix
 
     def select_row(self,table_name,primary_key_name = None,primary_key = None, customer_as = None ,provider_as = None):
         #Finds the row that contains the customer-provider
@@ -80,6 +89,11 @@ class SQL_querier:
         numLines = count[0].count
         print("\t" + str(numLines) + " Entries")
         return numLines
+
+    def count_prefix_amounts(self,table_name):
+        sql = "SELECT prefix, COUNT(*) FROM " + table_name + " GROUP BY prefix ORDER BY COUNT(*) desc;"
+        prefix_amounts = self.database.execute(sql)
+        return prefix_amounts
 
     def insert_results(self,asn, sql_anns):
         if(self.exists_row(table_name = self.results_table_name,primary_key_name = 'asn',primary_key = asn)):

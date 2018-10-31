@@ -1,7 +1,8 @@
 from Extrapolator import extrapolator
 import argparse
 from configparser import ConfigParser
-import pudb; pu.db
+#import pudb; pu.db
+
 
 
 def main(args):
@@ -20,7 +21,9 @@ def main(args):
     else:
         extrap.graph.update()
 
-    extrap.perform_propagation(args['announcement_count'])
+    extrap.perform_propagation(max_total_anns = args['announcement_count'], 
+                                max_memory = args['announcement_memory'],
+                                test = args['test'])
     
     if(not args['test']):
         extrap.graph.save_graph_to_db()        
@@ -35,6 +38,10 @@ def parse_arguments():
                         help="run in test mode (doesn't save to database)")
     parser.add_argument("-a","--announcement_count",type=int,
                         help="specify the number of announcements to read from database and propagate")
+    parser.add_argument("-m","--announcement_memory",type=int,
+                        help="""specify the amount of memory announcements should take.
+                                 Breaks propagation into segments""")
+
     args = parser.parse_args()
     return vars(args)
 

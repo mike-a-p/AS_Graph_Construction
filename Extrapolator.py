@@ -8,6 +8,7 @@ May Require 'psycopg2'
 '''
 import sys
 import time
+import math
 import named_tup
 from SQL_querier import SQL_querier
 import json
@@ -34,7 +35,7 @@ class extrapolator:
         if(exists):
             self.ann_input_table_name = table_name
         else:
-            print("Table name \"" + table_name + "\" not found in database. Check config file.")
+            print("Table name \"" + table_name + "\" not found in database. Check config file or database.")
             sys.exit()
         return 
 
@@ -54,7 +55,7 @@ class extrapolator:
         self.graph.set_graph_table(table_name)
         return
 
-    def perform_propagation(self,num_announcements = None,):
+    def perform_propagation(self, max_total_anns = None,max_memory = None, test = False):
         """Performs announcement propagation and uploads results to database.
             :meth:`~insert_announcements()`\n 
             :meth:`~prop_anns_sent_to_peers_providers()`\n
@@ -68,55 +69,48 @@ class extrapolator:
 
         """
         start_time = time.time()
-        self.insert_announcements(num_announcements)
-        self.prop_anns_sent_to_peers_providers()
-        self.propagate_up()
-        start_down = time.time()
-        self.propagate_down()
+
+        if(max_memory is None):
+            #MB
+            max_memory = 20000
+        max_group_anns = math.floor(max_memory/2.9)
+       
+        print("Selecting prefixes by frequency...") 
+        prefix_counts = self.querier.count_prefix_amounts(self.ann_input_table_name)
+        i = len(prefix_counts)-1
+        j = len(prefix_counts)-1
+
+        total_anns = 0
+        while(i > 0):
+            if(max_total_anns and total_anns >= max_total_anns):
+                break
+            num_anns = 0
+            while(i>-1 and num_anns + prefix_counts[i].count < max_group_anns):
+                if(max_total_anns and total_anns + prefix_counts[i].count > max_total_anns):
+                    break
+                num_anns+= prefix_counts[i].count
+                total_anns +=prefix_counts[i].count
+                i-=1
+            prefixes_to_use = prefix_counts[i+1:j+1]
+            j=i
+
+            self.insert_announcements(prefixes_to_use)
+
+            self.prop_anns_sent_to_peers_providers()
+            self.propagate_up()
+            start_down = time.time()
+            self.propagate_down()
+            if(not test):
+                self.save_anns_to_db()
+            self.graph.clear_announcements()
+        
+        if(not test):
+            self.graph.save_graph_to_db()
+
         end_time = time.time()
-        print("Time To Propagate Down: " + str(end_time - start_down) + "s")
-        print("Total Time To Propagate: " + str(end_time - start_time) + "s")
+        print("Total Time To Extrapolate: " + str(end_time - start_time) + "s")
         return
    
-    def prop_one_announcement(self, asn,ann,to_peer_provider = None, 
-                                            to_customer = None):
-        """Send a single announcement to neighbors depending on arguments
-
-        Args:
-            asn(:obj:`int`): ASN of AS sending announcement.
-            ann(:obj:`Announcement`): Announcement to send.
-            to_peer_provider(:obj:`int` or :obj: 'bool', optional):Identification of whether or
-                not the announcement is going to peers and providers.
-            to_customer(:obj:`int` or :obj: 'bool', optional):Identification of whether or 
-                not the announcement is going to customers.
-
-        """
-        source_as = self.graph.ases[asn]
-        new_path_length = ann.as_path_length + 1
-        #Integer arguments 2/1/0 are for "received from" customer/peer/provider
-        if(to_peer_provider):
-            prov_priority = 2 + new_path_length/100
-            for provider in source_as.providers:
-                updated_path = ann.as_path
-                updated_path.append(provider)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, prov_priority,new_path_length, updated_path)
-                self.graph.ases[provider].give_announcement(this_ann) 
-            peer_priority = 1 + new_path_length/100
-            for peer in source_as.peers:
-                updated_path = ann.as_path
-                updated_path.append(peer)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1, None, peer_priority, new_path_length, updated_path)
-                self.graph.ases[peer].give_announcement(this_ann)
-
-        if(to_customer):
-            cust_priority = new_path_length/100
-            for customer in source_as.customers:
-                updated_path = ann.as_path
-                updated_path.append(customer)
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0, None, cust_priority,new_path_length, updated_path)
-                self.graph.ases[customer].give_announcement(this_ann)
-        return
-
     def send_all_announcements(self,asn,to_peers_providers = None, to_customers = None):
         source_as = self.graph.ases[asn]
         if(to_peers_providers):
@@ -128,15 +122,15 @@ class extrapolator:
                 if(ann.priority < 2):
                     continue
 
-                new_path_length = ann.as_path_length + 1
-                path_length_weighted = 1 - new_path_length/100
+                new_length_priority = ann.priority - int(ann.priority)
+                new_length_priority -=  0.01
+                new_priority = 2 + new_length_priority
                 
-                prov_priority = 2 + path_length_weighted
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 2 , None, prov_priority,new_path_length, ann.as_path)
+                this_ann = Announcement(ann.prefix, ann.origin, new_priority, asn)
                 anns_to_providers.append(this_ann)
                 
-                peer_priority = 1 + path_length_weighted
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 1 , None, peer_priority,new_path_length, ann.as_path)
+                new_priority = 1 + new_length_priority
+                this_ann = Announcement(ann.prefix, ann.origin, new_priority, asn)
                 anns_to_peers.append(this_ann)
 
             for provider in source_as.providers:
@@ -148,12 +142,12 @@ class extrapolator:
             anns_to_customers = list()
             for ann in source_as.all_anns: 
                 ann = source_as.all_anns[ann]
-                new_path_length = ann.as_path_length + 1
-                path_length_weighted = 1 - new_path_length/100
-
-                cust_priority = 0 + path_length_weighted 
-                this_ann = Announcement(ann.prefix, ann.origin, ann.next_as, 0 , None, cust_priority,new_path_length, ann.as_path)
+                new_length_priority = ann.priority - int(ann.priority)
+                new_length_priority -=  0.01
+                new_priority = 2 + new_length_priority
+                this_ann = Announcement(ann.prefix, ann.origin, new_priority, asn)
                 anns_to_customers.append(this_ann)
+
             for customer in source_as.customers:
                 self.graph.ases[customer].receive_announcements(anns_to_customers)
 
@@ -213,7 +207,7 @@ class extrapolator:
         #as_path is ordered right to left, so rev_path is the reverse
         rev_path = as_path[::-1]
 
-        ann_to_check_for = Announcement(prefix,rev_path[0],hop,None,None,None,None)
+        ann_to_check_for = Announcement(prefix,rev_path[0],None,None)
 
         #i used to traverse as_path
         i = 0 
@@ -266,8 +260,7 @@ class extrapolator:
 
             priority = received_from + path_length_weighted
             if(not broken_path):
-                left_appendable_path = deque(as_path[-this_path_len:])
-                announcement = Announcement(prefix,rev_path[0],hop,received_from,sent_to,priority,this_path_len,left_appendable_path)
+                announcement = Announcement(prefix,rev_path[0],priority,rev_path[i-1])
                 if(sent_to == 1 or sent_to == 0):
                     self.graph.ases[asn].sent_to_peer_or_provider(announcement)
                 
@@ -289,13 +282,15 @@ class extrapolator:
         
         #For all ASes with announcements ( list made in give_anns_to_as_path() )
         for asn in self.ases_with_anns:
+            AS = self.graph.ases[asn]
+            AS.process_announcements()
             #For all announcements received by an AS
-            for ann in self.graph.ases[asn].anns_sent_to_peers_providers:
-                ann = self.graph.ases[asn].anns_sent_to_peers_providers[ann]
+            for ann in AS.anns_sent_to_peers_providers:
+                ann = AS.anns_sent_to_peers_providers[ann]
                 self.prop_one_announcement(asn,ann,1, None)
             return
 
-    def insert_announcements(self,num_announcements = None):
+    def insert_announcements(self,prefixes):
         """Begins announcement propagation
             
         Args:
@@ -307,14 +302,14 @@ class extrapolator:
 
         start_time = time.time()
 
-        if(self.ann_input_table_name):
-            records = self.querier.select_table(self.ann_input_table_name, num_announcements)
-        else:
-            records = self.querier.select_table('elements', num_announcements)
+        records = list()
+        for prefix in prefixes:
+            records.append(self.querier.select_anns_by_prefix(self.ann_input_table_name,prefix.prefix))
 
-        for ann in records:
-            if(ann.element_type == 'A'):
-                self.give_ann_to_as_path(ann.as_path, ann.prefix, ann.next_hop)
+        for prefix_anns in records:
+            for ann in prefix_anns:
+                if(ann.element_type == 'A'):
+                    self.give_ann_to_as_path(ann.as_path, ann.prefix, ann.next_hop)
         return
 
     def save_anns_to_db(self):

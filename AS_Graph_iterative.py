@@ -4,6 +4,7 @@ import psutil
 import psycopg2
 import named_tup
 import time
+import gc
 from collections import deque
 from datetime import datetime
 from progress_bar import progress_bar
@@ -297,8 +298,14 @@ class AS_Graph:
             if(ases_at_rank_i_plus_one):
                 self.ases_by_rank[i+1] = ases_at_rank_i_plus_one
         return self.ases_by_rank
-         
 
+    def clear_announcements(self):
+        #Removes all announcement references from ASes and garbage collects
+        for asn in self.ases:
+            AS = self.ases[asn]
+            AS.clear_announcements()         
+           # gc.collect()
+        return
     def append_no_dup(self, this_list, asn, l = None, r = None):
    
         #initialize l and r on first call
