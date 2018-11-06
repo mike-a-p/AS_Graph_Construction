@@ -27,7 +27,7 @@ class progress_bar:
 		self.tasks_done = self.tasks_done + 1
 		if((self.tasks_done/self.total_tasks)-self.progress > self.increment):
 			self.progress = self.tasks_done/self.total_tasks
-			self.bar = self.bar + 1
+			self.bar = int(self.progress/self.increment)
 			memoryUse = self.process.memory_info()[0]
 			memoryGB = memoryUse/(self.B_per_GB)
 			jobs_done = str(self.current_job) + "/" + str(self.total_jobs)

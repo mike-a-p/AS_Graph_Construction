@@ -27,7 +27,6 @@ class AS:
         self.rank = None
         self.anns_sent_to_peers_providers = dict()
         self.all_anns = dict()
-        self.seen_anns = dict()
         self.incoming_announcements = dict()
 
         #variables for Tarjan's Alg
@@ -111,11 +110,11 @@ class AS:
             best_old = self.all_anns.get(prefix,None)
             if(best_old is None or best_new.priority > best_old.priority):
                 self.all_anns[prefix] = best_new
+        self.incoming_announcements = dict() 
 
     def clear_announcements(self):
         #re-references all announcement collections to new dictionaries
         self.all_anns = dict()
-        self.seen_anns = dict()
         self.incoming_announcements = dict()
         self.anns_sent_to_peers_providers = dict() 
         return

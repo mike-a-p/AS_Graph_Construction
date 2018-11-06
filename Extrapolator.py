@@ -12,10 +12,9 @@ import math
 import named_tup
 from SQL_querier import SQL_querier
 import json
-from AS_Graph_iterative import AS_Graph
+from AS_Graph import AS_Graph
 from AS import AS
 from Announcement import Announcement
-from Recipient_List import Recipient_List
 from progress_bar import progress_bar
 from collections import deque
 
@@ -69,26 +68,30 @@ class extrapolator:
 
         """
         start_time = time.time()
-
+    
+        progress = progress_bar(len(list(self.graph.ases_by_rank.keys())))
+        for rank in list(self.graph.ases_by_rank.keys()):
+            time.sleep(1)
+            progress.update()
+    
         if(max_memory is None):
             #MB
             max_memory = 20000
         max_group_anns = math.floor(max_memory/2.9)
        
-        print("Selecting prefixes by frequency...") 
+        print("Ordering prefixes by frequency...") 
         prefix_counts = self.querier.count_prefix_amounts(self.ann_input_table_name)
         i = len(prefix_counts)-1
         j = len(prefix_counts)-1
 
         total_anns = 0
-        while(i > 0):
-            if(max_total_anns and total_anns >= max_total_anns):
-                break
-            num_anns = 0
-            while(i>-1 and num_anns + prefix_counts[i].count < max_group_anns):
+        stop = False
+        while(i >=0 and ((not max_total_anns) or total_anns + prefix_counts[i].count <= max_total_anns)):
+            anns_in_group = 0
+            while(i>=0 and anns_in_group + prefix_counts[i].count < max_group_anns):
                 if(max_total_anns and total_anns + prefix_counts[i].count > max_total_anns):
                     break
-                num_anns+= prefix_counts[i].count
+                anns_in_group+= prefix_counts[i].count
                 total_anns +=prefix_counts[i].count
                 i-=1
             prefixes_to_use = prefix_counts[i+1:j+1]
@@ -96,12 +99,13 @@ class extrapolator:
 
             self.insert_announcements(prefixes_to_use)
 
-            self.prop_anns_sent_to_peers_providers()
+#            self.prop_anns_sent_to_peers_providers()
             self.propagate_up()
             start_down = time.time()
             self.propagate_down()
             if(not test):
                 self.save_anns_to_db()
+
             self.graph.clear_announcements()
         
         if(not test):
@@ -272,6 +276,7 @@ class extrapolator:
         self.ases_with_anns = list(set(self.ases_with_anns))
         return
 
+#TODO FIX this to not use prop_one
     def prop_anns_sent_to_peers_providers(self):
         """Send announcements known to be sent to a peer or provider of each AS to
             the other peers and providers of each AS
